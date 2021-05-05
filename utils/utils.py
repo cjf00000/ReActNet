@@ -118,7 +118,7 @@ class ProgressMeter(object):
 def save_checkpoint(state, is_best, save):
     if not os.path.exists(save):
         os.makedirs(save)
-    filename = os.path.join(save, 'checkpoint.pth.tar')
+    filename = os.path.join(save, 'checkpoint-{}.pth.tar'.format(state['epoch']))
     torch.save(state, filename)
     if is_best:
         best_filename = os.path.join(save, 'model_best.pth.tar')

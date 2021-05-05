@@ -17,7 +17,7 @@ from utils.utils import *
 from utils import KD_loss
 from utils import log
 from torchvision import datasets, transforms
-from torch.autograd import Variable
+from torch.cuda.amp import autocast, GradScaler
 from birealnet import birealnet18
 import torchvision.models as models
 
@@ -36,8 +36,9 @@ parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
 parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument('--raport-file', default='raport.json', type=str,
                     help='file in which to store JSON experiment raport')
-parser.add_argument('--print-freq', '-p', default=10, type=int,
+parser.add_argument('--print-freq', '-p', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
+parser.add_argument("--amp", action="store_true", help="Run model AMP (automatic mixed precision) mode.",)
 
 args = parser.parse_args()
 
@@ -68,7 +69,7 @@ def main():
     start_t = time.time()
 
     cudnn.benchmark = True
-    cudnn.enabled=True
+    cudnn.enabled = True
 
     # load model
     model_teacher = models.__dict__[args.teacher](pretrained=True)
@@ -196,8 +197,8 @@ def main():
     if logger is not None:
         epoch_iter = logger.epoch_generator_wrapper(epoch_iter)
     for epoch in epoch_iter:
-        train_top1_acc,  train_top5_acc = train(epoch,  train_loader, model_student, model_teacher, criterion_kd, optimizer, scheduler, logger)
-        valid_obj, valid_top1_acc, valid_top5_acc = validate(epoch, val_loader, model_student, criterion, args, logger)
+        train(epoch,  train_loader, model_student, model_teacher, criterion_kd, optimizer, scheduler, logger)
+        valid_top1_acc = validate(epoch, val_loader, model_student, criterion, args, logger)
 
         is_best = False
         if valid_top1_acc > best_top1_acc:
@@ -244,19 +245,28 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
     if logger is not None:
         data_iter = logger.iteration_generator_wrapper(data_iter)
 
+    scaler = torch.cuda.amp.GradScaler(
+        init_scale=128,
+        growth_factor=2,
+        backoff_factor=0.5,
+        growth_interval=1000000000,
+        enabled=args.amp,
+    )
+
     for i, (images, target) in data_iter:
         data_time = time.time() - end
         images = images.cuda()
         target = target.cuda()
 
         # compute outputy
-        logits_student = model_student(images)
-        logits_teacher = model_teacher(images)
-        loss = criterion(logits_student, logits_teacher)
-        if torch.distributed.is_initialized():
-            reduced_loss = reduce_tensor(loss.data)
-        else:
-            reduced_loss = loss
+        with autocast(enabled=args.amp):
+            logits_student = model_student(images)
+            logits_teacher = model_teacher(images)
+            loss = criterion(logits_student, logits_teacher)
+            if torch.distributed.is_initialized():
+                reduced_loss = reduce_tensor(loss.data)
+            else:
+                reduced_loss = loss
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(logits_student, target, topk=(1, 5))
@@ -264,28 +274,30 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         # measure elapsed time
         if logger is not None:
             batch_time = time.time() - end
-            logger.log_metric('train.loss', reduced_loss.item())
-            logger.log_metric('train.top1', prec1.item())
-            logger.log_metric('train.top5', prec5.item())
+            logger.log_metric('train.loss', reduced_loss.item(), n)
+            logger.log_metric('train.top1', prec1.item(), n)
+            logger.log_metric('train.top5', prec5.item(), n)
             logger.log_metric('train.time', batch_time)
             logger.log_metric('train.data_time', data_time)
-            logger.log_metric('train.ips', calc_ips(images.size(0), batch_time))
+            logger.log_metric('train.ips', calc_ips(n, batch_time))
 
         end = time.time()
 
         torch.cuda.synchronize()
 
     scheduler.step()
-    return top1.avg, top5.avg
 
 
 def validate(epoch, val_loader, model, criterion, args):
+    top1 = log.AverageMeter()
+
     if logger is not None:
         logger.register_metric('val.top1', log.AverageMeter(), log_level=0)
         logger.register_metric('val.top5', log.AverageMeter(), log_level=0)
@@ -306,35 +318,37 @@ def validate(epoch, val_loader, model, criterion, args):
             target = target.cuda()
 
             # compute output
-            logits = model(images)
-            loss = criterion(logits, target)
+            with autocast(enabled=args.amp):
+                logits = model(images)
+                loss = criterion(logits, target)
 
-            # measure accuracy and record loss
-            pred1, pred5 = accuracy(logits, target, topk=(1, 5))
-            if torch.distributed.is_initialized():
-                reduced_loss = reduce_tensor(loss.data)
-                prec1 = reduce_tensor(prec1[0])
-                prec5 = reduce_tensor(prec5[0])
-            else:
-                reduced_loss = loss
-                prec1 = prec1[0]
-                prec5 = prec5[0]
+                # measure accuracy and record loss
+                pred1, pred5 = accuracy(logits, target, topk=(1, 5))
+                if torch.distributed.is_initialized():
+                    reduced_loss = reduce_tensor(loss.data)
+                    prec1 = reduce_tensor(prec1[0])
+                    prec5 = reduce_tensor(prec5[0])
+                else:
+                    reduced_loss = loss
+                    prec1 = prec1[0]
+                    prec5 = prec5[0]
 
             n = images.size(0)
 
             # measure elapsed time
             if logger is not None:
                 batch_time = time.time() - end
-                logger.log_metric('val.loss', reduced_loss.item())
-                logger.log_metric('val.top1', prec1.item())
-                logger.log_metric('val.top5', prec5.item())
+                logger.log_metric('val.loss', reduced_loss.item(), n)
+                logger.log_metric('val.top1', prec1.item(), n)
+                logger.log_metric('val.top5', prec5.item(), n)
                 logger.log_metric('val.time', batch_time)
-                logger.log_metric('val.ips', calc_ips(images.size(0), batch_time))
+                logger.log_metric('val.ips', calc_ips(n, batch_time))
+                top1.record(prec1.item(), n)
 
             end = time.time()
             torch.cuda.synchronize()
 
-    return losses.avg, top1.avg, top5.avg
+    return top1.avg
 
 
 if __name__ == '__main__':
