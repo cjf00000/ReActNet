@@ -138,19 +138,35 @@ def main():
         traindir,
         transform=train_transforms)
 
+    if torch.distributed.is_initialized():
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
+            train_dataset, shuffle=True
+        )
+    else:
+        train_sampler = None
+
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True,
+        train_dataset, sampler=train_sampler, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True)
 
-    # load validation data
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
+    val_dataset = datasets.ImageFolder(valdir, transforms.Compose([
             transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
+        ]))
+
+    if torch.distributed.is_initialized():
+        val_sampler = torch.utils.data.distributed.DistributedSampler(
+            val_dataset, shuffle=False
+        )
+    else:
+        val_sampler = None
+
+    # load validation data
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, sampler=val_sampler,
+        batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True)
 
     # Setup logger
@@ -176,7 +192,10 @@ def main():
 
     # train the model
     epoch = start_epoch
-    while epoch < args.epochs:
+    epoch_iter = range(start_epoch, args.epochs)
+    if logger is not None:
+        epoch_iter = logger.epoch_generator_wrapper(epoch_iter)
+    for epoch in epoch_iter:
         train_top1_acc,  train_top5_acc = train(epoch,  train_loader, model_student, model_teacher, criterion_kd, optimizer, scheduler, logger)
         valid_obj, valid_top1_acc, valid_top5_acc = validate(epoch, val_loader, model_student, criterion, args, logger)
 
@@ -192,8 +211,6 @@ def main():
                 'best_top1_acc': best_top1_acc,
                 'optimizer' : optimizer.state_dict(),
                 }, is_best, args.save)
-
-        epoch += 1
 
     training_time = (time.time() - start_t) / 3600
     print('total training time = {} hours'.format(training_time))
@@ -211,9 +228,9 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
         logger.register_metric('train.top1', log.AverageMeter(), log_level=0)
         logger.register_metric('train.top5', log.AverageMeter(), log_level=0)
         logger.register_metric('train.loss', log.AverageMeter(), log_level=0)
-        logger.register_metric('train.data_time', log.AverageMeter(), log_level=1)
-        logger.register_metric('train.time', log.AverageMeter(), log_level=1)
-        logger.register_metric('train.ips', log.AverageMeter(), log_level=1)
+        logger.register_metric('train.data_time', log.AverageMeter(), log_level=0)
+        logger.register_metric('train.time', log.AverageMeter(), log_level=0)
+        logger.register_metric('train.ips', log.AverageMeter(), log_level=0)
 
     model_student.train()
     model_teacher.eval()
@@ -223,7 +240,11 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
         cur_lr = param_group['lr']
     print('learning_rate:', cur_lr)
 
-    for i, (images, target) in enumerate(train_loader):
+    data_iter = enumerate(train_loader)
+    if logger is not None:
+        data_iter = logger.iteration_generator_wrapper(data_iter)
+
+    for i, (images, target) in data_iter:
         data_time = time.time() - end
         images = images.cuda()
         target = target.cuda()
@@ -272,11 +293,15 @@ def validate(epoch, val_loader, model, criterion, args):
         logger.register_metric('val.time', log.AverageMeter(), log_level=1)
         logger.register_metric('val.ips', log.AverageMeter(), log_level=1)
 
+    data_iter = enumerate(val_loader)
+    if not logger is None:
+        data_iter = logger.iteration_generator_wrapper(data_iter, val=True)
+
     # switch to evaluation mode
     model.eval()
     with torch.no_grad():
         end = time.time()
-        for i, (images, target) in enumerate(val_loader):
+        for i, (images, target) in data_iter:
             images = images.cuda()
             target = target.cuda()
 
