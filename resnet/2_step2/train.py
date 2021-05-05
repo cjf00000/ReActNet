@@ -31,7 +31,7 @@ parser.add_argument('--save', type=str, default='./models', help='path for savin
 parser.add_argument('--data', metavar='DIR', help='path to dataset')
 parser.add_argument('--label_smooth', type=float, default=0.1, help='label smoothing')
 parser.add_argument('--teacher', type=str, default='resnet34', help='path of ImageNet')
-parser.add_argument('-j', '--workers', default=40, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 args = parser.parse_args()
 
@@ -91,9 +91,9 @@ def main():
     start_epoch = 0
     best_top1_acc= 0
 
-    checkpoint_tar = os.path.join(args.save, 'checkpoint_ba.pth.tar')
-    checkpoint = torch.load(checkpoint_tar)
-    model_student.load_state_dict(checkpoint['state_dict'], strict=False)
+    # checkpoint_tar = os.path.join(args.save, 'checkpoint_ba.pth.tar')
+    # checkpoint = torch.load(checkpoint_tar)
+    # model_student.load_state_dict(checkpoint['state_dict'], strict=False)
 
     checkpoint_tar = os.path.join(args.save, 'checkpoint.pth.tar')
     if os.path.exists(checkpoint_tar):
@@ -144,27 +144,29 @@ def main():
         num_workers=args.workers, pin_memory=True)
 
     # train the model
-    epoch = start_epoch
-    while epoch < args.epochs:
-        train_obj, train_top1_acc,  train_top5_acc = train(epoch,  train_loader, model_student, model_teacher, criterion_kd, optimizer, scheduler)
-        valid_obj, valid_top1_acc, valid_top5_acc = validate(epoch, val_loader, model_student, criterion, args)
+    valid_obj, valid_top1_acc, valid_top5_acc = validate(epoch, val_loader, model_student, criterion, args)
 
-        is_best = False
-        if valid_top1_acc > best_top1_acc:
-            best_top1_acc = valid_top1_acc
-            is_best = True
-
-        save_checkpoint({
-            'epoch': epoch,
-            'state_dict': model_student.state_dict(),
-            'best_top1_acc': best_top1_acc,
-            'optimizer' : optimizer.state_dict(),
-            }, is_best, args.save)
-
-        epoch += 1
-
-    training_time = (time.time() - start_t) / 3600
-    print('total training time = {} hours'.format(training_time))
+    # epoch = start_epoch
+    # while epoch < args.epochs:
+    #     train_obj, train_top1_acc,  train_top5_acc = train(epoch,  train_loader, model_student, model_teacher, criterion_kd, optimizer, scheduler)
+    #     valid_obj, valid_top1_acc, valid_top5_acc = validate(epoch, val_loader, model_student, criterion, args)
+    #
+    #     is_best = False
+    #     if valid_top1_acc > best_top1_acc:
+    #         best_top1_acc = valid_top1_acc
+    #         is_best = True
+    #
+    #     save_checkpoint({
+    #         'epoch': epoch,
+    #         'state_dict': model_student.state_dict(),
+    #         'best_top1_acc': best_top1_acc,
+    #         'optimizer' : optimizer.state_dict(),
+    #         }, is_best, args.save)
+    #
+    #     epoch += 1
+    #
+    # training_time = (time.time() - start_t) / 3600
+    # print('total training time = {} hours'.format(training_time))
 
 
 def train(epoch, train_loader, model_student, model_teacher, criterion, optimizer, scheduler):
@@ -219,6 +221,7 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
     return losses.avg, top1.avg, top5.avg
 
 def validate(epoch, val_loader, model, criterion, args):
+    print('Starting validate...')
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
