@@ -161,7 +161,7 @@ def main():
                 ]
         try:
             import wandb
-            wandb.init(project="bnn", entity="jianfei", config=args, name=args.save)
+            wandb.init(project="bnn", entity="jianfeic", config=args, name=args.save)
             logger_backends.append(log.WandbBackend(wandb))
             print('Logging to wandb...')
         except ImportError:
