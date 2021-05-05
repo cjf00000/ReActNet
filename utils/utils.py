@@ -12,6 +12,8 @@ import torch.utils
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+
 from PIL import Image
 from torch.autograd import Variable
 
@@ -145,3 +147,9 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+def reduce_tensor(tensor):
+    rt = tensor.clone()
+    dist.all_reduce(rt, op=dist.ReduceOp.SUM)
+    rt /= torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
+    return rt
