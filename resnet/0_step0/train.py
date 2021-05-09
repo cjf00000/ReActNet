@@ -106,7 +106,7 @@ def main():
     start_epoch = 0
     best_top1_acc= 0
 
-    checkpoint_tar = os.path.join(args.save, 'checkpoint.pth.tar')
+    checkpoint_tar = os.path.join(args.save, 'checkpoint-255.pth.tar')
     if os.path.exists(checkpoint_tar):
         print('loading checkpoint {} ..........'.format(checkpoint_tar))
         checkpoint = torch.load(checkpoint_tar, map_location=lambda storage, loc: storage.cuda(args.gpu))
@@ -167,7 +167,7 @@ def main():
     # load validation data
     val_loader = torch.utils.data.DataLoader(
         val_dataset, sampler=val_sampler,
-        batch_size=args.batch_size, shuffle=(train_sampler is None),
+        batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
     # Setup logger
@@ -197,21 +197,21 @@ def main():
     if logger is not None:
         epoch_iter = logger.epoch_generator_wrapper(epoch_iter)
     for epoch in epoch_iter:
-        train(epoch,  train_loader, model_student, model_teacher, criterion_kd, optimizer, scheduler, logger)
+        # train(epoch,  train_loader, model_student, model_teacher, criterion_kd, optimizer, scheduler, logger)
         valid_top1_acc = validate(epoch, val_loader, model_student, criterion, args, logger)
 
-        is_best = False
-        if valid_top1_acc > best_top1_acc:
-            best_top1_acc = valid_top1_acc
-            is_best = True
-
-        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-            save_checkpoint({
-                'epoch': epoch,
-                'state_dict': model_student.state_dict(),
-                'best_top1_acc': best_top1_acc,
-                'optimizer' : optimizer.state_dict(),
-                }, is_best, args.save)
+        # is_best = False
+        # if valid_top1_acc > best_top1_acc:
+        #     best_top1_acc = valid_top1_acc
+        #     is_best = True
+        #
+        # if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+        #     save_checkpoint({
+        #         'epoch': epoch,
+        #         'state_dict': model_student.state_dict(),
+        #         'best_top1_acc': best_top1_acc,
+        #         'optimizer' : optimizer.state_dict(),
+        #         }, is_best, args.save)
 
     training_time = (time.time() - start_t) / 3600
     print('total training time = {} hours'.format(training_time))
@@ -295,7 +295,7 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
     scheduler.step()
 
 
-def validate(epoch, val_loader, model, criterion, args):
+def validate(epoch, val_loader, model, criterion, args, logger):
     top1 = log.AverageMeter()
 
     if logger is not None:
@@ -323,7 +323,7 @@ def validate(epoch, val_loader, model, criterion, args):
                 loss = criterion(logits, target)
 
                 # measure accuracy and record loss
-                pred1, pred5 = accuracy(logits, target, topk=(1, 5))
+                prec1, prec5 = accuracy(logits, target, topk=(1, 5))
                 if torch.distributed.is_initialized():
                     reduced_loss = reduce_tensor(loss.data)
                     prec1 = reduce_tensor(prec1[0])
@@ -348,7 +348,7 @@ def validate(epoch, val_loader, model, criterion, args):
             end = time.time()
             torch.cuda.synchronize()
 
-    return top1.avg
+    return top1.get_val()
 
 
 if __name__ == '__main__':
