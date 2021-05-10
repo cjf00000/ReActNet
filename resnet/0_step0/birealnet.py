@@ -5,6 +5,8 @@ import torch.nn.functional as F
 
 
 __all__ = ['birealnet18', 'birealnet34']
+debug = False
+cnt = 0
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -89,6 +91,12 @@ class BasicBlock(nn.Module):
         residual = x
 
         out = self.move0(x)
+        if debug:
+            global cnt
+            cnt += 1
+            data = [out, self.binary_conv.weight, self.binary_conv.bias]
+            torch.save(data, 'layers/layer_{}.pth.tar'.format(cnt))
+
         out = self.binary_conv(out)
         out = self.bn1(out)
 

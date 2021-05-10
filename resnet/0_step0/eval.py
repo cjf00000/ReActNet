@@ -6,10 +6,10 @@ from torch.cuda.amp import autocast
 
 sys.path.append("../../")
 from utils.utils import *
+import birealnet
 from birealnet import birealnet18
 from utils import log
 from dataloaders import get_pytorch_val_loader
-
 
 ckpt_file = 'models/checkpoint-255.pth.tar'
 valdir = '/home/LargeData/Large/ImageNet'
@@ -39,6 +39,11 @@ start_t = time.time()
 num_images = 50000
 with torch.no_grad():
     for i, (images, target) in enumerate(val_loader):
+        if i == 0:
+            birealnet.debug = True
+        else:
+            birealnet.debug = False
+
         images = images.cuda()
         target = target.cuda()
         n = images.size(0)
