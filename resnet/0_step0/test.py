@@ -50,13 +50,27 @@ def sign(x, honest=True):
 
 
 def mm_xnornet(a, b):
+    c = a @ b
     scale_a = a.abs().mean(1, keepdim=True)
     scale_b = b.abs().mean(0, keepdim=True)
     print('Scale a ', scale_a.t())
     print('Scale b ', scale_b)
     a = sign(a)
     b = sign(b)
-    return scale_a * scale_b * (a @ b)
+    c_hat = a @ b
+    xnornet_c = scale_a * scale_b * c_hat
+    os_a = scale_a
+    os_b = scale_b
+    for i in range(10):
+        old_os_a, old_os_b = os_a.clone(), os_b.clone()
+        os_a = (os_b * c_hat * c).sum(1, keepdim=True) / \
+               ((os_b * c_hat) ** 2).sum(1, keepdim=True)
+        os_b = (os_a * c_hat * c).sum(0, keepdim=True) / \
+               ((os_a * c_hat) ** 2).sum(0, keepdim=True)
+        optimal_c = os_a * os_b * c_hat
+        print('Iteration ', i, ' diff ', (old_os_a - os_a).norm(), (old_os_b - os_b).norm(), (c - optimal_c).norm())
+
+    return  xnornet_c, optimal_c
 
 
 A = x[:, :, 0, 0]
@@ -64,8 +78,8 @@ B = weight[:, :, 0, 0].t()
 exact_C = A @ B
 print('Exact Norm ', exact_C.norm())
 print(A.abs().mean(), A.max() - A.min())
-xnornet_C = mm_xnornet(A, B)
-print('XNor Error ', (exact_C - xnornet_C).norm())
+xnornet_C, optimal_C = mm_xnornet(A, B)
+print('XNor Error ', (exact_C - xnornet_C).norm(), (exact_C - optimal_C).norm())
 
 errors = []
 for i in range(100):
