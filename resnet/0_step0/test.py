@@ -3,6 +3,9 @@ import torch
 import torch.nn.functional as F
 
 x, weight, _ = torch.load('layers/layer_1.pth.tar')
+x.requires_grad = False
+weight.requires_grad = False
+x = x[:100, :, :, :]
 y = F.conv2d(x, weight, padding=1)
 
 N, C, H, W = x.shape
@@ -24,6 +27,22 @@ K = 3
 #
 # print(y.norm())
 # print((y-y_m).norm())
+
+
+# Manually implement the conv by dot products
+x_padded = F.pad(x, (1, 1, 1, 1))
+y_m = torch.zeros_like(y)
+for n in range(N):
+    print(n)
+    for c in range(C):
+        for h in range(H):
+            for w in range(W):
+                x_field = x_padded[n, :, h:h+3, w:w+3]
+                w_field = weight[:, c, :, :]
+                y_m[n, c, h, w] = (x_field * w_field).sum()
+
+print(y.norm())
+print((y-y_m).norm())
 
 
 def unbiased_quantize(a, dim=0):
@@ -70,20 +89,50 @@ def mm_xnornet(a, b):
         optimal_c = os_a * os_b * c_hat
         print('Iteration ', i, ' diff ', (old_os_a - os_a).norm(), (old_os_b - os_b).norm(), (c - optimal_c).norm())
 
-    return  xnornet_c, optimal_c
+    return xnornet_c, optimal_c
 
 
-A = x[:, :, 0, 0]
-B = weight[:, :, 0, 0].t()
-exact_C = A @ B
-print('Exact Norm ', exact_C.norm())
-print(A.abs().mean(), A.max() - A.min())
-xnornet_C, optimal_C = mm_xnornet(A, B)
-print('XNor Error ', (exact_C - xnornet_C).norm(), (exact_C - optimal_C).norm())
+def conv_unbiased(a, b):
+    # Randomly quantize
+    a = unbiased_quantize(a, dim=1)
+    b = unbiased_quantize(b, dim=0)
+    return F.conv2d(a, b, padding=1)
 
-errors = []
-for i in range(100):
-    C = mm_unbiased(A, B)
-    errors.append((exact_C - C).norm())
 
-print('Unbiased Error ', torch.stack(errors).mean())
+def conv_xnornet(a, b):
+    scale_a = a.abs().mean(dim=1, keepdim=True) # [N, 1, W, H]
+    kernel = torch.ones(1, 1, 3, 3).cuda() / 9
+    K = F.conv2d(scale_a, kernel, padding=1)
+
+    scale_b = b.abs().mean([0, 2, 3], keepdim=True)
+    a = sign(a)
+    b = sign(b)
+    c_hat = F.conv2d(a, b, padding=1)
+    return K, c_hat, K * scale_b * c_hat
+
+
+#
+# A = x[:, :, 0, 0]
+# B = weight[:, :, 0, 0].t()
+# exact_C = A @ B
+# print('Exact Norm ', exact_C.norm())
+# print(A.abs().mean(), A.max() - A.min())
+# xnornet_C, optimal_C = mm_xnornet(A, B)
+# print('XNor Error ', (exact_C - xnornet_C).norm(), (exact_C - optimal_C).norm())
+#
+# errors = []
+# for i in range(100):
+#     C = mm_unbiased(A, B)
+#     errors.append((exact_C - C).norm())
+#
+# print('Unbiased Error ', torch.stack(errors).mean())
+# print(y.norm())
+# K, c_hat, xnornet_y = conv_xnornet(x, weight)
+# print('XNor Error ', (y - xnornet_y).norm())
+#
+# errors = []
+# for i in range(10):
+#     unbiased_y = conv_unbiased(x, weight)
+#     errors.append((y - unbiased_y).norm())
+#
+# print('Unbiased Error ', torch.stack(errors).mean())
