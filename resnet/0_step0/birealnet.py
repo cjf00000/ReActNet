@@ -110,19 +110,29 @@ class BasicBlock(nn.Module):
 
         return out
 
-class BiRealNet(nn.Module):
 
+class BiRealNet(nn.Module):
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False):
         super(BiRealNet, self).__init__()
         self.inplanes = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
+        if self.num_classes == 1000:
+            self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+                                   bias=False)
+            self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        else:
+            self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False)
+            self.maxpool = lambda x: x
+
         self.bn1 = nn.BatchNorm2d(64)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+
+        if self.num_classes == 1000:
+            self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        else:
+            self.layer4 = lambda x: x
+
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 

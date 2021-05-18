@@ -118,8 +118,10 @@ class ProgressMeter(object):
 def save_checkpoint(state, is_best, save):
     if not os.path.exists(save):
         os.makedirs(save)
-    filename = os.path.join(save, 'checkpoint-{}.pth.tar'.format(state['epoch']))
+    filename = os.path.join(save, 'checkpoint.pth.tar')
     torch.save(state, filename)
+    epoch_filename = os.path.join(save, 'checkpoint-{}.pth.tar'.format(state['epoch']))
+    shutil.copyfile(filename, epoch_filename)
     if is_best:
         best_filename = os.path.join(save, 'model_best.pth.tar')
         shutil.copyfile(filename, best_filename)
@@ -148,8 +150,42 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
+
 def reduce_tensor(tensor):
     rt = tensor.clone()
     dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
     return rt
+
+
+def calc_ips(batch_size, time):
+    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
+    tbs = world_size * batch_size
+    return tbs/time
+
+
+def lr_policy(lr_fn, logger=None):
+    if logger is not None:
+        logger.register_metric('lr', log.IterationMeter(), log_level=1)
+    def _alr(optimizer, iteration, epoch):
+        lr = lr_fn(iteration, epoch)
+
+        if logger is not None:
+            logger.log_metric('lr', lr)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+
+    return _alr
+
+
+def lr_cosine_policy(base_lr, warmup_length, epochs, logger=None):
+    def _lr_fn(iteration, epoch):
+        if epoch < warmup_length:
+            lr = base_lr * (epoch + 1) / warmup_length
+        else:
+            e = epoch - warmup_length
+            es = epochs - warmup_length
+            lr = 0.5 * (1 + np.cos(np.pi * e / es)) * base_lr
+        return lr
+
+    return lr_policy(_lr_fn, logger=logger)

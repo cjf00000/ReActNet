@@ -320,3 +320,119 @@ def get_syntetic_loader(
         ),
         -1,
     )
+
+
+def get_imagenet_loaders(data_path, batch_size, workers):
+    sys.path.append("../../")
+    from utils.utils import *
+
+    # load training data
+    traindir = os.path.join(data_path, 'train')
+    valdir = os.path.join(data_path, 'val')
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
+    # data augmentation
+    crop_scale = 0.08
+    lighting_param = 0.1
+    train_transforms = transforms.Compose([
+        transforms.RandomResizedCrop(224, scale=(crop_scale, 1.0)),
+        Lighting(lighting_param),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize])
+
+    train_dataset = datasets.ImageFolder(
+        traindir,
+        transform=train_transforms)
+
+    if torch.distributed.is_initialized():
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
+            train_dataset, shuffle=True
+        )
+    else:
+        train_sampler = None
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, sampler=train_sampler, batch_size=batch_size, shuffle=(train_sampler is None),
+        num_workers=workers, pin_memory=True)
+
+    val_dataset = datasets.ImageFolder(valdir, transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize,
+        ]))
+
+    if torch.distributed.is_initialized():
+        val_sampler = torch.utils.data.distributed.DistributedSampler(
+            val_dataset, shuffle=False
+        )
+    else:
+        val_sampler = None
+
+    # load validation data
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, sampler=val_sampler,
+        batch_size=batch_size, shuffle=False,
+        num_workers=workers, pin_memory=True)
+
+    return train_dataset, train_loader, val_dataset, val_loader
+
+
+def get_pytorch_train_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers=5, _worker_init_fn=None, fp16=False):
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip()
+    ])
+    if num_classes == 10:
+        print('Loading CIFAR10')
+        train_dataset = datasets.CIFAR10(root=data_path, train=True, download=True, transform=transform_train)
+    else:
+        print('Loading CIFAR100')
+        train_dataset = datasets.CIFAR100(root=data_path, train=True, download=True, transform=transform_train)
+
+    if torch.distributed.is_initialized():
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    else:
+        train_sampler = None
+
+    # train_loader = torch.utils.data.DataLoader(
+    train_loader = dataloader.DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=(train_sampler is None),
+            num_workers=workers, worker_init_fn=_worker_init_fn, pin_memory=True, sampler=train_sampler,
+        collate_fn=fast_collate, drop_last=False)
+
+    # return train_loader, len(train_loader)
+    return PrefetchedWrapper(train_loader, num_classes, fp16, one_hot), len(train_loader)
+
+
+def get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers=5, _worker_init_fn=None, fp16=False):
+    if num_classes == 10:
+        val_dataset = datasets.CIFAR10(root=data_path, train=False, download=True)
+    else:
+        val_dataset = datasets.CIFAR100(root=data_path, train=False, download=True)
+
+    if torch.distributed.is_initialized():
+        val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset)
+    else:
+        val_sampler = None
+
+    # val_loader = torch.utils.data.DataLoader(
+    val_loader = dataloader.DataLoader(
+            val_dataset,
+            sampler=val_sampler,
+            batch_size=batch_size, shuffle=False,
+            num_workers=workers, worker_init_fn=_worker_init_fn, pin_memory=True,
+            collate_fn=fast_collate)
+
+    return PrefetchedWrapper(val_loader, num_classes, fp16, one_hot), len(val_loader)
+
+
+def get_dataloaders(dataset, data_path, batch_size, one_hot, workers=5, _worker_init_fn=None, fp16=False):
+    if dataset == 'cifar10':
+        train_loader, train_iters = get_pytorch_train_loader_cifar10(data_path, batch_size, 10, one_hot, workers, _worker_init_fn, fp16)
+        val_loader, val_iters = get_pytorch_val_loader_cifar10(data_path, batch_size, 10, one_hot, workers, _worker_init_fn, fp16)
+        return 10, train_loader, train_iters, val_loader, val_iters
+    else:
+        raise RuntimeError('Unsupported Dataset')

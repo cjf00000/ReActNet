@@ -20,6 +20,7 @@ from torchvision import datasets, transforms
 from torch.cuda.amp import autocast, GradScaler
 from birealnet import birealnet18
 import torchvision.models as models
+from dataloaders import get_dataloaders
 
 parser = argparse.ArgumentParser("birealnet18")
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
@@ -28,14 +29,13 @@ parser.add_argument('--learning_rate', type=float, default=0.001, help='init lea
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
 parser.add_argument('--weight_decay', type=float, default=0, help='weight decay')
 parser.add_argument('--save', type=str, default='./models', help='path for saving trained models')
+parser.add_argument('--dataset', type=str, default='cifar10', help='Dataset. Cifar10, Cifar100, or ImageNet')
 parser.add_argument('--data', metavar='DIR', help='path to dataset')
 parser.add_argument('--label_smooth', type=float, default=0.1, help='label smoothing')
 parser.add_argument('--teacher', type=str, default='resnet34', help='path of ImageNet')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument("--local_rank", default=0, type=int)
-parser.add_argument('--raport-file', default='raport.json', type=str,
-                    help='file in which to store JSON experiment raport')
 parser.add_argument('--print-freq', '-p', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument("--amp", action="store_true", help="Run model AMP (automatic mixed precision) mode.",)
@@ -71,24 +71,23 @@ def main():
     cudnn.benchmark = True
     cudnn.enabled = True
 
-    # load model
-    model_teacher = models.__dict__[args.teacher](pretrained=True)
-    model_teacher = model_teacher.cuda()
-    model_teacher = DDP(model_teacher, device_ids=[args.gpu])
-    for p in model_teacher.parameters():
-        p.requires_grad = False
-    model_teacher.eval()
+    # Build dataloaders
+    num_classes, train_loader, train_iters, val_loader, val_iters = \
+        get_dataloaders(args.dataset, args.data, args.batch_size, False, workers=args.workers)
 
-    model_student = birealnet18()
+    # Setup logger
+    logger = get_logger(args, train_iters, val_iters)
+
+    # Build model
+    model_student = birealnet18(num_classes=num_classes)
     model_student = model_student.cuda()
     model_student = DDP(model_student, device_ids=[args.gpu])
 
-    criterion = nn.CrossEntropyLoss()
-    criterion = criterion.cuda()
-    criterion_smooth = CrossEntropyLabelSmooth(CLASSES, args.label_smooth)
-    criterion_smooth = criterion_smooth.cuda()
-    criterion_kd = KD_loss.DistributionLoss()
+    # load model
+    criterion_train, criterion_val, model_teacher = \
+        get_criterion(args.dataset, args.teacher, args.gpu)
 
+    # Build optimizer
     all_parameters = model_student.parameters()
     weight_parameters = []
     for pname, p in model_student.named_parameters():
@@ -98,15 +97,17 @@ def main():
     other_parameters = list(filter(lambda p: id(p) not in weight_parameters_id, all_parameters))
 
     optimizer = torch.optim.Adam(
-            [{'params' : other_parameters},
-            {'params' : weight_parameters, 'weight_decay' : args.weight_decay}],
+            [{'params': other_parameters},
+            {'params': weight_parameters, 'weight_decay': args.weight_decay}],
             lr=args.learning_rate,)
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step : (1.0-step/args.epochs), last_epoch=-1)
-    start_epoch = 0
-    best_top1_acc= 0
+    scheduler = lr_cosine_policy(args.lr, args.warmup, args.epochs, logger=logger)
 
-    checkpoint_tar = os.path.join(args.save, 'checkpoint-255.pth.tar')
+    # Resume
+    start_epoch = 0
+    best_top1_acc = 0
+
+    checkpoint_tar = os.path.join(args.save, 'checkpoint.pth.tar')
     if os.path.exists(checkpoint_tar):
         print('loading checkpoint {} ..........'.format(checkpoint_tar))
         checkpoint = torch.load(checkpoint_tar, map_location=lambda storage, loc: storage.cuda(args.gpu))
@@ -115,113 +116,30 @@ def main():
         model_student.load_state_dict(checkpoint['state_dict'], strict=False)
         print("loaded checkpoint {} epoch = {}" .format(checkpoint_tar, checkpoint['epoch']))
 
-    # adjust the learning rate according to the checkpoint
-    for epoch in range(start_epoch):
-        scheduler.step()
-
-    # load training data
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
-    # data augmentation
-    crop_scale = 0.08
-    lighting_param = 0.1
-    train_transforms = transforms.Compose([
-        transforms.RandomResizedCrop(224, scale=(crop_scale, 1.0)),
-        Lighting(lighting_param),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize])
-
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transform=train_transforms)
-
-    if torch.distributed.is_initialized():
-        train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_dataset, shuffle=True
-        )
-    else:
-        train_sampler = None
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, sampler=train_sampler, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True)
-
-    val_dataset = datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ]))
-
-    if torch.distributed.is_initialized():
-        val_sampler = torch.utils.data.distributed.DistributedSampler(
-            val_dataset, shuffle=False
-        )
-    else:
-        val_sampler = None
-
-    # load validation data
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset, sampler=val_sampler,
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
-
-    # Setup logger
-    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-        logger_backends = [
-                    log.JsonBackend(os.path.join(args.save, args.raport_file), log_level=1),
-                    log.StdOut1LBackend(len(train_loader), len(val_loader), args.epochs, log_level=0),
-                ]
-        try:
-            import wandb
-            wandb.init(project="bnn", entity="jianfeic", config=args, name=args.save)
-            logger_backends.append(log.WandbBackend(wandb))
-            print('Logging to wandb...')
-        except ImportError:
-            print('Wandb not found, logging to stdout and json...')
-
-        logger = log.Logger(args.print_freq, logger_backends)
-
-        for k, v in args.__dict__.items():
-            logger.log_run_tag(k, v)
-    else:
-        logger = None
-
     # train the model
-    epoch = start_epoch
     epoch_iter = range(start_epoch, args.epochs)
     if logger is not None:
         epoch_iter = logger.epoch_generator_wrapper(epoch_iter)
     for epoch in epoch_iter:
-        # train(epoch,  train_loader, model_student, model_teacher, criterion_kd, optimizer, scheduler, logger)
-        valid_top1_acc = validate(epoch, val_loader, model_student, criterion, args, logger)
+        train(epoch,  train_loader, model_student, model_teacher, criterion_train, optimizer, scheduler, logger)
+        valid_top1_acc = validate(epoch, val_loader, model_student, criterion_val, args, logger)
 
-        # is_best = False
-        # if valid_top1_acc > best_top1_acc:
-        #     best_top1_acc = valid_top1_acc
-        #     is_best = True
-        #
-        # if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-        #     save_checkpoint({
-        #         'epoch': epoch,
-        #         'state_dict': model_student.state_dict(),
-        #         'best_top1_acc': best_top1_acc,
-        #         'optimizer' : optimizer.state_dict(),
-        #         }, is_best, args.save)
+        is_best = False
+        if valid_top1_acc > best_top1_acc:
+            best_top1_acc = valid_top1_acc
+            is_best = True
+
+        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+            save_checkpoint({
+                'epoch': epoch,
+                'state_dict': model_student.state_dict(),
+                'best_top1_acc': best_top1_acc,
+                'optimizer' : optimizer.state_dict(),
+                }, is_best, args.save)
 
     training_time = (time.time() - start_t) / 3600
     print('total training time = {} hours'.format(training_time))
     dist.destroy_process_group()
-
-
-def calc_ips(batch_size, time):
-    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
-    tbs = world_size * batch_size
-    return tbs/time
 
 
 def train(epoch, train_loader, model_student, model_teacher, criterion, optimizer, scheduler, logger):
@@ -257,12 +175,16 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
         data_time = time.time() - end
         images = images.cuda()
         target = target.cuda()
+        scheduler(optimizer, i, epoch)
 
         # compute outputy
         with autocast(enabled=args.amp):
             logits_student = model_student(images)
-            logits_teacher = model_teacher(images)
-            loss = criterion(logits_student, logits_teacher)
+            if model_teacher:
+                logits_teacher = model_teacher(images)
+                loss = criterion(logits_student, logits_teacher)
+            else:
+                loss = criterion(logits_student, target)
             if torch.distributed.is_initialized():
                 reduced_loss = reduce_tensor(loss.data)
             else:
@@ -291,8 +213,6 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
         end = time.time()
 
         torch.cuda.synchronize()
-
-    scheduler.step()
 
 
 def validate(epoch, val_loader, model, criterion, args, logger):
@@ -349,6 +269,50 @@ def validate(epoch, val_loader, model, criterion, args, logger):
             torch.cuda.synchronize()
 
     return top1.get_val()
+
+
+def get_logger(args, train_iters, val_iters):
+    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+        logger_backends = [
+                    log.JsonBackend(os.path.join(args.save, 'raport.json'), log_level=1),
+                    log.StdOut1LBackend(train_iters, val_iters, args.epochs, log_level=0),
+                ]
+        try:
+            import wandb
+            wandb.init(project="bnn", entity="jianfeic", config=args, name=args.save)
+            logger_backends.append(log.WandbBackend(wandb))
+            print('Logging to wandb...')
+        except ImportError:
+            print('Wandb not found, logging to stdout and json...')
+
+        logger = log.Logger(args.print_freq, logger_backends)
+
+        for k, v in args.__dict__.items():
+            logger.log_run_tag(k, v)
+    else:
+        logger = None
+
+    return logger
+
+
+def get_criterion(dataset, teacher, gpu):
+    criterion = nn.CrossEntropyLoss()
+    criterion = criterion.cuda()
+    # criterion_smooth = CrossEntropyLabelSmooth(CLASSES, args.label_smooth)
+    # criterion_smooth = criterion_smooth.cuda()
+    if dataset == 'imagenet':
+        # load model
+        model_teacher = models.__dict__[teacher](pretrained=True)
+        model_teacher = model_teacher.cuda()
+        model_teacher = DDP(model_teacher, device_ids=[gpu])
+        for p in model_teacher.parameters():
+            p.requires_grad = False
+        model_teacher.eval()
+
+        criterion_kd = KD_loss.DistributionLoss()
+        return criterion_kd, criterion, model_teacher
+    else:
+        return criterion, criterion, None
 
 
 if __name__ == '__main__':
