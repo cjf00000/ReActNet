@@ -5,7 +5,6 @@ import torch.nn.functional as F
 x, weight, _ = torch.load('layers/layer_1.pth.tar')
 x.requires_grad = False
 weight.requires_grad = False
-x = x[:100, :, :, :]
 y = F.conv2d(x, weight, padding=1)
 
 N, C, H, W = x.shape
@@ -31,23 +30,28 @@ K = 3
 
 # Manually implement the conv by dot products
 x_padded = F.pad(x, (1, 1, 1, 1))
-y_m = torch.zeros_like(y)
-for n in range(N):
-    print(n)
-    for c in range(C):
-        for h in range(H):
-            for w in range(W):
-                x_field = x_padded[n, :, h:h+3, w:w+3]
-                w_field = weight[:, c, :, :]
-                y_m[n, c, h, w] = (x_field * w_field).sum()
-
-print(y.norm())
-print((y-y_m).norm())
+# y_m = torch.zeros_like(y)
+# for n in range(N):
+#     for c in range(C):
+#         for h in range(H):
+#             for w in range(W):
+#                 x_field = x_padded[n, :, h:h+3, w:w+3]
+#                 w_field = weight[c, :, :, :]
+#                 y_m[n, c, h, w] = (x_field * w_field).sum()
+#     break
+#
+# print(y[0].norm())
+# print((y[0]-y_m[0]).norm())
 
 
 def unbiased_quantize(a, dim=0):
-    z = a.min(dim, keepdim=True)[0]
-    r = a.max(dim, keepdim=True)[0] - z
+    if dim is None:
+        z = a.min()
+        r = a.max() - z
+    else:
+        z = a.min(dim, keepdim=True)[0]
+        r = a.max(dim, keepdim=True)[0] - z
+
     a = (a - z) / r
     samples = torch.rand_like(a) >= a
     samples = samples.float() * r + z
@@ -104,12 +108,17 @@ def conv_xnornet(a, b):
     kernel = torch.ones(1, 1, 3, 3).cuda() / 9
     K = F.conv2d(scale_a, kernel, padding=1)
 
-    scale_b = b.abs().mean([0, 2, 3], keepdim=True)
+    scale_b = b.abs().mean([1, 2, 3]).view(1, 64, 1, 1)
     a = sign(a)
     b = sign(b)
     c_hat = F.conv2d(a, b, padding=1)
     return K, c_hat, K * scale_b * c_hat
 
+
+def dot_unbiased(a, b):
+    a = unbiased_quantize(a, None)
+    b = unbiased_quantize(b, None)
+    return (a * b).sum()
 
 #
 # A = x[:, :, 0, 0]
@@ -127,12 +136,24 @@ def conv_xnornet(a, b):
 #
 # print('Unbiased Error ', torch.stack(errors).mean())
 # print(y.norm())
-# K, c_hat, xnornet_y = conv_xnornet(x, weight)
-# print('XNor Error ', (y - xnornet_y).norm())
-#
-# errors = []
-# for i in range(10):
-#     unbiased_y = conv_unbiased(x, weight)
-#     errors.append((y - unbiased_y).norm())
-#
-# print('Unbiased Error ', torch.stack(errors).mean())
+
+K, c_hat, xnornet_y = conv_xnornet(x, weight)
+print('XNor Error ', (y - xnornet_y).norm())
+
+errors = []
+for i in range(10):
+    unbiased_y = conv_unbiased(x, weight)
+    errors.append((y - unbiased_y).norm())
+
+print('Unbiased Error ', torch.stack(errors).mean())
+
+# Let's take a look at the first dot product
+x_field = x_padded[0, :, 1:4, 1:4]
+w_field = weight[0, :, :, :]
+y_exact = (x_field * w_field).sum()
+x_hat = sign(x_field)
+w_hat = sign(w_field)
+x_scale = x_field.mean()
+w_scale = w_field.mean()
+y_binary = (x_hat * w_hat * x_scale * w_scale).sum()
+y_unbiased = dot_unbiased(x_field, w_field)
