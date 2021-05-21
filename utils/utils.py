@@ -16,6 +16,7 @@ import torch.distributed as dist
 
 from PIL import Image
 from torch.autograd import Variable
+import log
 
 #lighting data augmentation
 imagenet_pca = {
@@ -164,28 +165,3 @@ def calc_ips(batch_size, time):
     return tbs/time
 
 
-def lr_policy(lr_fn, logger=None):
-    if logger is not None:
-        logger.register_metric('lr', log.IterationMeter(), log_level=1)
-    def _alr(optimizer, iteration, epoch):
-        lr = lr_fn(iteration, epoch)
-
-        if logger is not None:
-            logger.log_metric('lr', lr)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-
-    return _alr
-
-
-def lr_cosine_policy(base_lr, warmup_length, epochs, logger=None):
-    def _lr_fn(iteration, epoch):
-        if epoch < warmup_length:
-            lr = base_lr * (epoch + 1) / warmup_length
-        else:
-            e = epoch - warmup_length
-            es = epochs - warmup_length
-            lr = 0.5 * (1 + np.cos(np.pi * e / es)) * base_lr
-        return lr
-
-    return lr_policy(_lr_fn, logger=logger)

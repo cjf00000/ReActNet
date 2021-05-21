@@ -112,29 +112,30 @@ class BasicBlock(nn.Module):
 
 
 class BiRealNet(nn.Module):
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False):
+    def __init__(self, block, layers, num_channels=64, num_classes=1000, zero_init_residual=False):
         super(BiRealNet, self).__init__()
-        self.inplanes = 64
-        if self.num_classes == 1000:
-            self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+        self.inplanes = num_channels
+        if num_classes == 1000:
+            self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                    bias=False)
             self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         else:
-            self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False)
+            self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, padding=1, bias=False)
             self.maxpool = lambda x: x
 
-        self.bn1 = nn.BatchNorm2d(64)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.layer1 = self._make_layer(block, num_channels, layers[0])
+        self.layer2 = self._make_layer(block, num_channels*2, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, num_channels*4, layers[2], stride=2)
 
-        if self.num_classes == 1000:
-            self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        if num_classes == 1000:
+            self.layer4 = self._make_layer(block, num_channels*8, layers[3], stride=2)
+            self.fc = nn.Linear(num_channels*8, num_classes)
         else:
             self.layer4 = lambda x: x
+            self.fc = nn.Linear(num_channels*4, num_classes)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -173,6 +174,18 @@ class BiRealNet(nn.Module):
 def birealnet18(pretrained=False, **kwargs):
     """Constructs a BiRealNet-18 model. """
     model = BiRealNet(BasicBlock, [4, 4, 4, 4], **kwargs)
+    return model
+
+
+def birealnet20(pretrained=False, **kwargs):
+    """Constructs a BiRealNet-18 model. """
+    model = BiRealNet(BasicBlock, [6, 6, 6], **kwargs)
+    return model
+
+
+def birealnet32(pretrained=False, **kwargs):
+    """Constructs a BiRealNet-18 model. """
+    model = BiRealNet(BasicBlock, [10, 10, 10], **kwargs)
     return model
 
 

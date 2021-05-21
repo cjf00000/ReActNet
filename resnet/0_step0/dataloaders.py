@@ -29,11 +29,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import os
 import torch
+import sys
 import numpy as np
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from PIL import Image
 from functools import partial
+sys.path.append("../../")
+from utils.utils import *
 
 # from image_classification.autoaugment import AutoaugmentImageNetPolicy
 
@@ -76,13 +79,13 @@ def load_jpeg_from_file(path, cuda=True):
     return input
 
 
-def fast_collate(memory_format, batch):
+def fast_collate(batch):
     imgs = [img[0] for img in batch]
     targets = torch.tensor([target[1] for target in batch], dtype=torch.int64)
     w = imgs[0].size[0]
     h = imgs[0].size[1]
     tensor = torch.zeros((len(imgs), 3, h, w), dtype=torch.uint8).contiguous(
-        memory_format=memory_format
+        # memory_format=memory_format
     )
     for i, img in enumerate(imgs):
         nump_array = np.asarray(img, dtype=np.uint8)
@@ -323,9 +326,6 @@ def get_syntetic_loader(
 
 
 def get_imagenet_loaders(data_path, batch_size, workers):
-    sys.path.append("../../")
-    from utils.utils import *
-
     # load training data
     traindir = os.path.join(data_path, 'train')
     valdir = os.path.join(data_path, 'val')
@@ -383,7 +383,8 @@ def get_imagenet_loaders(data_path, batch_size, workers):
 def get_pytorch_train_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers=5, _worker_init_fn=None, fp16=False):
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip()
+        transforms.RandomHorizontalFlip(),
+        # transforms.RandomRotation(15),
     ])
     if num_classes == 10:
         print('Loading CIFAR10')
@@ -397,8 +398,7 @@ def get_pytorch_train_loader_cifar10(data_path, batch_size, num_classes, one_hot
     else:
         train_sampler = None
 
-    # train_loader = torch.utils.data.DataLoader(
-    train_loader = dataloader.DataLoader(
+    train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=batch_size, shuffle=(train_sampler is None),
             num_workers=workers, worker_init_fn=_worker_init_fn, pin_memory=True, sampler=train_sampler,
         collate_fn=fast_collate, drop_last=False)
@@ -418,8 +418,7 @@ def get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, one_hot, 
     else:
         val_sampler = None
 
-    # val_loader = torch.utils.data.DataLoader(
-    val_loader = dataloader.DataLoader(
+    val_loader = torch.utils.data.DataLoader(
             val_dataset,
             sampler=val_sampler,
             batch_size=batch_size, shuffle=False,
@@ -430,9 +429,10 @@ def get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, one_hot, 
 
 
 def get_dataloaders(dataset, data_path, batch_size, one_hot, workers=5, _worker_init_fn=None, fp16=False):
-    if dataset == 'cifar10':
-        train_loader, train_iters = get_pytorch_train_loader_cifar10(data_path, batch_size, 10, one_hot, workers, _worker_init_fn, fp16)
-        val_loader, val_iters = get_pytorch_val_loader_cifar10(data_path, batch_size, 10, one_hot, workers, _worker_init_fn, fp16)
-        return 10, train_loader, train_iters, val_loader, val_iters
+    if dataset == 'cifar10' or dataset == 'cifar100':
+        num_classes = 10 if dataset == 'cifar10' else 100
+        train_loader, train_iters = get_pytorch_train_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers, _worker_init_fn, fp16)
+        val_loader, val_iters = get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers, _worker_init_fn, fp16)
+        return num_classes, train_loader, train_iters, val_loader, val_iters
     else:
         raise RuntimeError('Unsupported Dataset')

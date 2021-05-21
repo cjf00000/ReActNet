@@ -16,15 +16,17 @@ sys.path.append("../../")
 from utils.utils import *
 from utils import KD_loss
 from utils import log
+from utils.log import lr_cosine_policy
 from torchvision import datasets, transforms
 from torch.cuda.amp import autocast, GradScaler
-from birealnet import birealnet18
+from birealnet import birealnet18, birealnet34, birealnet20, birealnet32
 import torchvision.models as models
 from dataloaders import get_dataloaders
 
 parser = argparse.ArgumentParser("birealnet18")
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
 parser.add_argument('--epochs', type=int, default=256, help='num of training epochs')
+parser.add_argument('--warmup', type=int, default=4, help='num of warmup epochs')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='init learning rate')
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
 parser.add_argument('--weight_decay', type=float, default=0, help='weight decay')
@@ -32,7 +34,9 @@ parser.add_argument('--save', type=str, default='./models', help='path for savin
 parser.add_argument('--dataset', type=str, default='cifar10', help='Dataset. Cifar10, Cifar100, or ImageNet')
 parser.add_argument('--data', metavar='DIR', help='path to dataset')
 parser.add_argument('--label_smooth', type=float, default=0.1, help='label smoothing')
-parser.add_argument('--teacher', type=str, default='resnet34', help='path of ImageNet')
+parser.add_argument('--teacher', type=str, default='resnet34', help='Teacher Architecture')
+parser.add_argument('--arch', type=str, default='resnet18', help='Student Architecture')
+parser.add_argument('--channel', type=int, default=64, help='Number of channels')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument("--local_rank", default=0, type=int)
@@ -79,9 +83,16 @@ def main():
     logger = get_logger(args, train_iters, val_iters)
 
     # Build model
-    model_student = birealnet18(num_classes=num_classes)
+    if args.arch == 'resnet20':
+        model_student = birealnet20(num_classes=num_classes, num_channels=args.channel)
+    else:
+        model_student = birealnet32(num_classes=num_classes, num_channels=args.channel)
+
     model_student = model_student.cuda()
-    model_student = DDP(model_student, device_ids=[args.gpu])
+    if args.distributed:
+        model_student = DDP(model_student, device_ids=[args.gpu])
+
+    print(model_student)
 
     # load model
     criterion_train, criterion_val, model_teacher = \
@@ -96,12 +107,16 @@ def main():
     weight_parameters_id = list(map(id, weight_parameters))
     other_parameters = list(filter(lambda p: id(p) not in weight_parameters_id, all_parameters))
 
-    optimizer = torch.optim.Adam(
-            [{'params': other_parameters},
-            {'params': weight_parameters, 'weight_decay': args.weight_decay}],
-            lr=args.learning_rate,)
+    # optimizer = torch.optim.Adam(
+    #         [{'params': other_parameters},
+    #         {'params': weight_parameters, 'weight_decay': args.weight_decay}],
+    #         lr=args.learning_rate,)
+    optimizer = torch.optim.SGD(
+        [{'params': other_parameters},
+         {'params': weight_parameters, 'weight_decay': args.weight_decay}],
+        lr=args.learning_rate, )
 
-    scheduler = lr_cosine_policy(args.lr, args.warmup, args.epochs, logger=logger)
+    scheduler = lr_cosine_policy(args.learning_rate, args.warmup, args.epochs, logger=logger)
 
     # Resume
     start_epoch = 0
@@ -134,12 +149,14 @@ def main():
                 'epoch': epoch,
                 'state_dict': model_student.state_dict(),
                 'best_top1_acc': best_top1_acc,
-                'optimizer' : optimizer.state_dict(),
+                'optimizer': optimizer.state_dict(),
                 }, is_best, args.save)
 
     training_time = (time.time() - start_t) / 3600
     print('total training time = {} hours'.format(training_time))
-    dist.destroy_process_group()
+
+    if args.distributed:
+        dist.destroy_process_group()
 
 
 def train(epoch, train_loader, model_student, model_teacher, criterion, optimizer, scheduler, logger):
@@ -152,7 +169,8 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
         logger.register_metric('train.ips', log.AverageMeter(), log_level=0)
 
     model_student.train()
-    model_teacher.eval()
+    if model_teacher:
+        model_teacher.eval()
     end = time.time()
 
     for param_group in optimizer.param_groups:
