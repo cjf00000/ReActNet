@@ -19,7 +19,7 @@ from utils import log
 from utils.log import lr_cosine_policy
 from torchvision import datasets, transforms
 from torch.cuda.amp import autocast, GradScaler
-from birealnet import birealnet18, birealnet34, birealnet20, birealnet32
+from birealnet import get_model
 import torchvision.models as models
 from dataloaders import get_dataloaders
 
@@ -83,10 +83,7 @@ def main():
     logger = get_logger(args, train_iters, val_iters)
 
     # Build model
-    if args.arch == 'resnet20':
-        model_student = birealnet20(num_classes=num_classes, num_channels=args.channel)
-    else:
-        model_student = birealnet32(num_classes=num_classes, num_channels=args.channel)
+    model_student = get_model(args.arch, num_classes=num_classes, num_channels=args.channel)
 
     model_student = model_student.cuda()
     if args.distributed:
@@ -218,6 +215,7 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
         scaler.step(optimizer)
         scaler.update()
 
+        torch.cuda.synchronize()
         # measure elapsed time
         if logger is not None:
             batch_time = time.time() - end
@@ -229,8 +227,6 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
             logger.log_metric('train.ips', calc_ips(n, batch_time))
 
         end = time.time()
-
-        torch.cuda.synchronize()
 
 
 def validate(epoch, val_loader, model, criterion, args, logger):

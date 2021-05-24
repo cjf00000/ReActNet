@@ -128,7 +128,7 @@ class BiRealNet(nn.Module):
         self.layer2 = self._make_layer(block, num_channels*2, layers[1], stride=2)
         self.layer3 = self._make_layer(block, num_channels*4, layers[2], stride=2)
 
-        if num_classes == 1000:
+        if len(layers) == 4:
             self.layer4 = self._make_layer(block, num_channels*8, layers[3], stride=2)
             self.fc = nn.Linear(num_channels*8, num_classes)
         else:
@@ -194,3 +194,17 @@ def birealnet34(pretrained=False, **kwargs):
     model = BiRealNet(BasicBlock, [6, 8, 12, 6], **kwargs)
     return model
 
+
+def birealnet68(pretrained=False, **kwargs):
+    """Constructs a BiRealNet-34 model. """
+    model = BiRealNet(BasicBlock, [6, 8, 46, 6], **kwargs)
+    return model
+
+
+def get_model(arch, num_classes, num_channels):
+    models = {'resnet18': birealnet18,
+              'resnet20': birealnet20,
+              'resnet32': birealnet32,
+              'resnet34': birealnet34,
+              'resnet68': birealnet68}
+    return models[arch](num_classes=num_classes, num_channels=num_channels)

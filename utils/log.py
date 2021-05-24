@@ -299,7 +299,7 @@ class StdOutBackend(object):
 
 
 class WandbBackend(object):
-    def __init__(self, wandb, log_level=0):
+    def __init__(self, wandb, log_level=1):
         print("Logger: Wandb")
         self.wandb = wandb
         self.level = log_level
