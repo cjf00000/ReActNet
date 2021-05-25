@@ -31,10 +31,11 @@ parser.add_argument('--learning_rate', type=float, default=0.001, help='init lea
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
 parser.add_argument('--weight_decay', type=float, default=0, help='weight decay')
 parser.add_argument('--save', type=str, default='./models', help='path for saving trained models')
+parser.add_argument('--resume', type=str, default='checkpoint.pth.tar', help='path checkpoint')
 parser.add_argument('--dataset', type=str, default='cifar10', help='Dataset. Cifar10, Cifar100, or ImageNet')
 parser.add_argument('--data', metavar='DIR', help='path to dataset')
 parser.add_argument('--label_smooth', type=float, default=0.1, help='label smoothing')
-parser.add_argument('--teacher', type=str, default='resnet34', help='Teacher Architecture')
+parser.add_argument('--teacher', type=str, default='none', help='Teacher Architecture')
 parser.add_argument('--arch', type=str, default='resnet18', help='Student Architecture')
 parser.add_argument('--channel', type=int, default=64, help='Number of channels')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -43,6 +44,8 @@ parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument('--print-freq', '-p', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument("--amp", action="store_true", help="Run model AMP (automatic mixed precision) mode.",)
+parser.add_argument("--qa", type=str, help="fp, b, q1, q2, q3, ...",)
+parser.add_argument("--qw", action="store_true", help="Quantize weight",)
 
 args = parser.parse_args()
 
@@ -83,7 +86,8 @@ def main():
     logger = get_logger(args, train_iters, val_iters)
 
     # Build model
-    model_student = get_model(args.arch, num_classes=num_classes, num_channels=args.channel)
+    model_student = get_model(args.arch, qa=args.qa, qw=args.qw,
+                                         num_classes=num_classes, num_channels=args.channel)
 
     model_student = model_student.cuda()
     if args.distributed:
@@ -93,7 +97,7 @@ def main():
 
     # load model
     criterion_train, criterion_val, model_teacher = \
-        get_criterion(args.dataset, args.teacher, args.gpu)
+        get_criterion(args.dataset, args.teacher, num_classes, args.gpu)
 
     # Build optimizer
     all_parameters = model_student.parameters()
@@ -119,7 +123,7 @@ def main():
     start_epoch = 0
     best_top1_acc = 0
 
-    checkpoint_tar = os.path.join(args.save, 'checkpoint.pth.tar')
+    checkpoint_tar = args.resume
     if os.path.exists(checkpoint_tar):
         print('loading checkpoint {} ..........'.format(checkpoint_tar))
         checkpoint = torch.load(checkpoint_tar, map_location=lambda storage, loc: storage.cuda(args.gpu))
@@ -309,7 +313,7 @@ def get_logger(args, train_iters, val_iters):
     return logger
 
 
-def get_criterion(dataset, teacher, gpu):
+def get_criterion(dataset, teacher, num_classes, gpu):
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.cuda()
     # criterion_smooth = CrossEntropyLabelSmooth(CLASSES, args.label_smooth)
@@ -325,8 +329,28 @@ def get_criterion(dataset, teacher, gpu):
 
         criterion_kd = KD_loss.DistributionLoss()
         return criterion_kd, criterion, model_teacher
-    else:
+    elif teacher == 'none':
         return criterion, criterion, None
+    else:
+        model_teacher = get_model(teacher,
+                                  num_classes=num_classes,
+                                  num_channels=96)
+        model_teacher = model_teacher.cuda()
+        if args.distributed:
+            model_teacher = DDP(model_teacher, device_ids=[gpu])
+
+        checkpoint_tar = 'teacher.pth.tar'
+        print('loading checkpoint {} ..........'.format(checkpoint_tar))
+        checkpoint = torch.load(checkpoint_tar, map_location=lambda storage, loc: storage.cuda(args.gpu))
+        model_teacher.load_state_dict(checkpoint['state_dict'], strict=False)
+        print("loaded checkpoint {}".format(checkpoint_tar))
+
+        for p in model_teacher.parameters():
+            p.requires_grad = False
+        model_teacher.eval()
+
+        criterion_kd = KD_loss.DistributionLoss()
+        return criterion_kd, criterion, model_teacher
 
 
 if __name__ == '__main__':

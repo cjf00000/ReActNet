@@ -9,11 +9,12 @@ from utils.utils import *
 import birealnet
 from birealnet import birealnet18
 from utils import log
-from dataloaders import get_pytorch_val_loader
+from dataloaders import get_dataloaders
+from birealnet import get_model
 
-ckpt_file = 'models/checkpoint-255.pth.tar'
-valdir = '/home/LargeData/Large/ImageNet'
-num_classes = 1000
+ckpt_file = 'cifar100_fp34_c128_sgd_wd5e-4/model_best.pth.tar'
+valdir = '~/data'
+batch_size = 1000
 data = torch.load(ckpt_file)
 checkpoint = data['state_dict']
 state_dict = {}
@@ -22,13 +23,15 @@ for k in checkpoint.keys():
     print(k, checkpoint[k].shape)
     state_dict[k.replace('module.', '')] = checkpoint[k]
 
-model = birealnet18()
+num_classes, _, _, val_loader, val_iters = \
+        get_dataloaders('cifar100', valdir, batch_size, False, workers=24)
+
+# model = birealnet18()
+model = get_model('resnet34', num_classes=num_classes, num_channels=128)
+
 model = model.cuda()
 model.load_state_dict(state_dict)
 print('State dict loaded.')
-
-
-val_loader, _ = get_pytorch_val_loader(valdir, 224, 512, 1000, False, workers=24)
 
 # Validation loop
 top1 = log.AverageMeter()
@@ -39,10 +42,10 @@ start_t = time.time()
 num_images = 50000
 with torch.no_grad():
     for i, (images, target) in enumerate(val_loader):
-        if i == 0:
-            birealnet.debug = True
-        else:
-            birealnet.debug = False
+        # if i == 0:
+        #     birealnet.debug = True
+        # else:
+        #     birealnet.debug = False
 
         images = images.cuda()
         target = target.cuda()
