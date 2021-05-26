@@ -28,6 +28,7 @@ class MultiBitBinaryActivation(nn.Module):  # Extension of binary activation for
         super(MultiBitBinaryActivation, self).__init__()
         self.bits = bits
         self.binact = BinaryActivation()
+        self.scale = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
     def forward(self, x):
         scaling_factor = x.abs().mean().detach()
@@ -41,7 +42,9 @@ class MultiBitBinaryActivation(nn.Module):  # Extension of binary activation for
             result = result + scale * q
             scale /= 2
 
-        return result * scaling_factor
+        return result
+        # return result * self.scale
+        # return result * scaling_factor * self.scale
 
 
 class HardBinaryConv(nn.Module):

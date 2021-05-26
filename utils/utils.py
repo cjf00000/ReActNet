@@ -16,6 +16,8 @@ import torch.distributed as dist
 
 from PIL import Image
 from torch.autograd import Variable
+sys.path.append("../../utils/")
+
 import log
 
 #lighting data augmentation
