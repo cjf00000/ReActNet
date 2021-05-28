@@ -61,7 +61,7 @@ class lsq_quantize(torch.autograd.Function):
         case1 = (transformed < 0).float() * bias
         case2 = mask.float() * error
         case3 = (transformed > num_bins).float() * (bias + num_bins)
-        ss_gradient = (case1 + case2 + case3) * grad_scale
+        ss_gradient = (case1 + case2 + case3) * grad_scale * 100 # TODO hack
         ctx.save_for_backward(mask, ss_gradient)
         return quantized
 
@@ -106,8 +106,16 @@ class LSQ(nn.Module):
         super(LSQ, self).__init__()
         self.bits = bits
         self.step_size = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        self.initialized = False
 
     def forward(self, x):
+        if not self.initialized:
+            with torch.no_grad():
+                num_bins = 2 ** self.bits - 1
+                self.step_size.copy_(2 * x.abs().mean() / np.sqrt(num_bins))
+                self.initialized = True
+                print('Initializing step size to ', self.step_size)
+
         return lsq_quantize().apply(x, self.step_size, self.bits)
 
 
