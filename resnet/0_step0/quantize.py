@@ -1,6 +1,74 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class binary_activation(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        out = torch.sign(input)
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, = ctx.saved_tensors
+        clip_mask = torch.logical_and(input >= -1, input <= 1).float()
+        grad = 2 * clip_mask * (1 - input.abs())
+        return grad_output * grad
+
+
+class multi_bit_quantize(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, bits):
+        interval = 0.5 ** (bits - 1)
+        mask = torch.logical_and(input >= -2 + interval, input <= 2 - interval)
+        input = torch.clamp(input, -2 + interval, 2 - interval)
+        ctx.save_for_backward(mask)
+
+        # scale input to [0, B-1]
+        zero = 2 - interval
+        scale = (4 - 2 * interval) / (2 ** bits - 1)
+        input = (input - zero) / scale
+        input = torch.round(input)
+        return input * scale + zero
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        mask, = ctx.saved_tensors
+        return grad_output * mask.float(), None
+
+
+class lsq_quantize(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, scale, bits):
+        num_bins = 2 ** bits - 1
+        bias = -num_bins / 2
+        num_features = input.numel() / input.shape[0]
+        grad_scale = 1.0 / np.sqrt(num_features * num_bins)
+
+        # Forward
+        eps = 1e-7
+        scale = scale + eps
+        transformed = input / scale - bias
+        vbar = torch.clamp(transformed, 0.0, num_bins).round()
+        quantized = (vbar + bias) * scale
+
+        # Step size gradient
+        error = vbar - transformed
+        mask = torch.logical_and(transformed >= 0, transformed <= num_bins)
+        case1 = (transformed < 0).float() * bias
+        case2 = mask.float() * error
+        case3 = (transformed > num_bins).float() * (bias + num_bins)
+        ss_gradient = (case1 + case2 + case3) * grad_scale
+        ctx.save_for_backward(mask, ss_gradient)
+        return quantized
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        mask, ss_gradient = ctx.saved_tensors
+        return grad_output * mask.float(), (grad_output * ss_gradient).sum(), None
 
 
 class BinaryActivation(nn.Module):
@@ -8,19 +76,39 @@ class BinaryActivation(nn.Module):
         super(BinaryActivation, self).__init__()
 
     def forward(self, x):
-        out_forward = torch.sign(x)
-        #out_e1 = (x^2 + 2*x)
-        #out_e2 = (-x^2 + 2*x)
-        out_e_total = 0
-        mask1 = x < -1
-        mask2 = x < 0
-        mask3 = x < 1
-        out1 = (-1) * mask1.type(torch.float32) + (x*x + 2*x) * (1-mask1.type(torch.float32))
-        out2 = out1 * mask2.type(torch.float32) + (-x*x + 2*x) * (1-mask2.type(torch.float32))
-        out3 = out2 * mask3.type(torch.float32) + 1 * (1- mask3.type(torch.float32))
-        out = out_forward.detach() - out3.detach() + out3
+        return binary_activation().apply(x)
+        # out_forward = torch.sign(x)
+        # #out_e1 = (x^2 + 2*x)
+        # #out_e2 = (-x^2 + 2*x)
+        # out_e_total = 0
+        # mask1 = x < -1
+        # mask2 = x < 0
+        # mask3 = x < 1
+        # out1 = (-1) * mask1.type(torch.float32) + (x*x + 2*x) * (1-mask1.type(torch.float32))
+        # out2 = out1 * mask2.type(torch.float32) + (-x*x + 2*x) * (1-mask2.type(torch.float32))
+        # out3 = out2 * mask3.type(torch.float32) + 1 * (1- mask3.type(torch.float32))
+        # out = out_forward.detach() - out3.detach() + out3
+        #
+        # return out
 
-        return out
+
+class MultibitActivation(nn.Module):
+    def __init__(self, bits):
+        super(MultibitActivation, self).__init__()
+        self.bits = bits
+
+    def forward(self, x):
+        return multi_bit_quantize().apply(x, self.bits)
+
+
+class LSQ(nn.Module):
+    def __init__(self, bits):
+        super(LSQ, self).__init__()
+        self.bits = bits
+        self.step_size = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+
+    def forward(self, x):
+        return lsq_quantize().apply(x, self.step_size, self.bits)
 
 
 class MultiBitBinaryActivation(nn.Module):  # Extension of binary activation for ablation
@@ -31,9 +119,6 @@ class MultiBitBinaryActivation(nn.Module):  # Extension of binary activation for
         self.scale = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
     def forward(self, x):
-        scaling_factor = x.abs().mean().detach()
-        x = x / scaling_factor
-
         result = 0
         scale = 1.0
         for i in range(self.bits):
@@ -43,8 +128,6 @@ class MultiBitBinaryActivation(nn.Module):  # Extension of binary activation for
             scale /= 2
 
         return result
-        # return result * self.scale
-        # return result * scaling_factor * self.scale
 
 
 class HardBinaryConv(nn.Module):
