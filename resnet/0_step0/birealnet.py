@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
-from quantize import BinaryActivation, HardBinaryConv, MultiBitBinaryActivation, MultibitActivation, LSQ
+from quantize import BinaryActivation, HardBinaryConv, MultiBitBinaryActivation, MultibitActivation, LSQ, LSQConv
 
 __all__ = ['birealnet18', 'birealnet34']
 debug = False
@@ -33,7 +33,7 @@ class LearnableBias(nn.Module):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, qa='fp', qw=False):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, qa='fp', qw='fp'):
         super(BasicBlock, self).__init__()
 
         self.move0 = LearnableBias(inplanes)
@@ -51,10 +51,13 @@ class BasicBlock(nn.Module):
             bits = int(qa[1:])
             self.binary_activation = MultibitActivation(bits)
 
-        if qw:
+        if qw == 'b':
             self.binary_conv = HardBinaryConv(inplanes, planes, stride=stride)
-        else:
+        elif qa == 'fp':
             self.binary_conv = conv3x3(inplanes, planes, stride=stride)
+        else:
+            bits = int(qw[1:])
+            self.binary_conv = LSQConv(inplanes, planes, stride=stride, num_bits=bits)
 
         self.bn1 = nn.BatchNorm2d(planes)
         self.move1 = LearnableBias(planes)
@@ -91,7 +94,7 @@ class BasicBlock(nn.Module):
 
 class BiRealNet(nn.Module):
     def __init__(self, block, layers, num_channels=64, num_classes=1000, zero_init_residual=False,
-                 qa='fp', qw=False):
+                 qa='fp', qw='fp'):
         super(BiRealNet, self).__init__()
         self.inplanes = num_channels
         self.qa = qa
@@ -182,7 +185,7 @@ def birealnet68(pretrained=False, **kwargs):
     return model
 
 
-def get_model(arch, num_classes, num_channels, qa='fp', qw=False):
+def get_model(arch, num_classes, num_channels, qa='fp', qw='fp'):
     models = {'resnet18': birealnet18,
               'resnet20': birealnet20,
               'resnet32': birealnet32,

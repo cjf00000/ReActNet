@@ -44,8 +44,8 @@ parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument('--print-freq', '-p', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument("--amp", action="store_true", help="Run model AMP (automatic mixed precision) mode.",)
-parser.add_argument("--qa", type=str, help="fp, b, q1, q2, q3, m1, m2, m3, l1, l2, l3...",)
-parser.add_argument("--qw", action="store_true", help="Quantize weight",)
+parser.add_argument("--qa", type=str, default='fp', help="fp, b, q1, q2, q3, m1, m2, m3, l1, l2, l3...",)
+parser.add_argument("--qw", type=str, default='fp', help="fp, b, l1, l2, l3...",)
 
 args = parser.parse_args()
 
