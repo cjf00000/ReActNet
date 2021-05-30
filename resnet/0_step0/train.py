@@ -318,6 +318,9 @@ def get_criterion(dataset, teacher, num_classes, gpu):
     criterion = criterion.cuda()
     # criterion_smooth = CrossEntropyLabelSmooth(CLASSES, args.label_smooth)
     # criterion_smooth = criterion_smooth.cuda()
+    if teacher == 'none':
+        return criterion, criterion, None
+
     if dataset == 'imagenet':
         # load model
         model_teacher = models.__dict__[teacher](pretrained=True)
@@ -329,8 +332,6 @@ def get_criterion(dataset, teacher, num_classes, gpu):
 
         criterion_kd = KD_loss.DistributionLoss()
         return criterion_kd, criterion, model_teacher
-    elif teacher == 'none':
-        return criterion, criterion, None
     else:
         model_teacher = get_model(teacher,
                                   num_classes=num_classes,

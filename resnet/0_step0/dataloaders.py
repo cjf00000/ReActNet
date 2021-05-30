@@ -181,9 +181,11 @@ def get_pytorch_train_loader(
         interpolation
     ]
     traindir = os.path.join(data_path, "train")
+    lighting_param = 0.1
     transforms_list = [
         transforms.RandomResizedCrop(image_size, interpolation=interpolation),
         transforms.RandomHorizontalFlip(),
+        Lighting(lighting_param),
     ]
     if augmentation == "autoaugment":
         transforms_list.append(AutoaugmentImageNetPolicy())
@@ -204,7 +206,7 @@ def get_pytorch_train_loader(
         num_workers=workers,
         worker_init_fn=_worker_init_fn,
         pin_memory=True,
-        collate_fn=partial(fast_collate, memory_format),
+        collate_fn=fast_collate,
         drop_last=True,
         persistent_workers=True,
     )
@@ -258,7 +260,7 @@ def get_pytorch_val_loader(
         num_workers=workers,
         worker_init_fn=_worker_init_fn,
         pin_memory=True,
-        collate_fn=partial(fast_collate, memory_format),
+        collate_fn=fast_collate,
         drop_last=False,
         persistent_workers=True,
     )
@@ -433,6 +435,11 @@ def get_dataloaders(dataset, data_path, batch_size, one_hot, workers=5, _worker_
         num_classes = 10 if dataset == 'cifar10' else 100
         train_loader, train_iters = get_pytorch_train_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers, _worker_init_fn, fp16)
         val_loader, val_iters = get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers, _worker_init_fn, fp16)
+        return num_classes, train_loader, train_iters, val_loader, val_iters
+    elif dataset == 'imagenet':
+        num_classes = 1000
+        train_loader, train_iters = get_pytorch_train_loader(data_path, 224, batch_size, num_classes, one_hot, workers=workers)
+        val_loader, val_iters = get_pytorch_val_loader(data_path, 224, batch_size, num_classes, one_hot, workers=workers)
         return num_classes, train_loader, train_iters, val_loader, val_iters
     else:
         raise RuntimeError('Unsupported Dataset')
