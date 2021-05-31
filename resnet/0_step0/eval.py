@@ -12,8 +12,9 @@ from utils import log
 from dataloaders import get_dataloaders
 from birealnet import get_model
 
-ckpt_file = 'cifar100_fp18_c64_sgd_wd5e-4_distill_qa/model_best.pth.tar'
-valdir = '~/data'
+# ckpt_file = 'cifar100_fp18_c64_sgd_wd5e-4_distill_qa/model_best.pth.tar'
+ckpt_file = 'imagenet_fp.pth.tar'
+valdir = '/home/LargeData/Large/ImageNet'
 batch_size = 1000
 data = torch.load(ckpt_file)
 checkpoint = data['state_dict']
@@ -24,11 +25,11 @@ for k in checkpoint.keys():
     state_dict[k.replace('module.', '')] = checkpoint[k]
 
 num_classes, _, _, val_loader, val_iters = \
-        get_dataloaders('cifar100', valdir, batch_size, False, workers=24)
+        get_dataloaders('imagenet', valdir, batch_size, False, workers=24)
 
 # model = birealnet18()
 model = get_model('resnet18', num_classes=num_classes, num_channels=64,
-                  qa='b', qw=False)
+                  qa='fp', qw='fp')
 
 model = model.cuda()
 model.load_state_dict(state_dict)
@@ -43,10 +44,10 @@ start_t = time.time()
 num_images = 50000
 with torch.no_grad():
     for i, (images, target) in enumerate(val_loader):
-        if i == 0:
-            birealnet.debug = True
-        else:
-            birealnet.debug = False
+        # if i == 0:
+        #     birealnet.debug = True
+        # else:
+        #     birealnet.debug = False
 
         images = images.cuda()
         target = target.cuda()

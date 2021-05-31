@@ -167,6 +167,8 @@ class LSQConv(nn.Conv2d):
     def __init__(self, in_chn, out_chn, kernel_size=3, stride=1, padding=1, num_bits=1):
         super(LSQConv, self).__init__(in_chn, out_chn, kernel_size, stride, padding)
         self.quantizer = LSQ(num_bits)
+        with torch.no_grad():
+            self.weight /= 10
 
     def forward(self, x):
         scaling_factor = self.weight.abs().mean((1, 2, 3)).view(-1, 1, 1, 1)

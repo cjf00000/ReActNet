@@ -53,7 +53,7 @@ class BasicBlock(nn.Module):
 
         if qw == 'b':
             self.binary_conv = HardBinaryConv(inplanes, planes, stride=stride)
-        elif qa == 'fp':
+        elif qw == 'fp':
             self.binary_conv = conv3x3(inplanes, planes, stride=stride)
         else:
             bits = int(qw[1:])

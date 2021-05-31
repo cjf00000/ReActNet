@@ -115,7 +115,7 @@ def main():
     optimizer = torch.optim.SGD(
         [{'params': other_parameters},
          {'params': weight_parameters, 'weight_decay': args.weight_decay}],
-        lr=args.learning_rate, )
+        lr=args.learning_rate, momentum=args.momentum)
 
     scheduler = lr_cosine_policy(args.learning_rate, args.warmup, args.epochs, logger=logger)
 
@@ -127,7 +127,7 @@ def main():
     if os.path.exists(checkpoint_tar):
         print('loading checkpoint {} ..........'.format(checkpoint_tar))
         checkpoint = torch.load(checkpoint_tar, map_location=lambda storage, loc: storage.cuda(args.gpu))
-        start_epoch = checkpoint['epoch']
+        # start_epoch = checkpoint['epoch']
         best_top1_acc = checkpoint['best_top1_acc']
         model_student.load_state_dict(checkpoint['state_dict'], strict=False)
         print("loaded checkpoint {} epoch = {}" .format(checkpoint_tar, checkpoint['epoch']))
