@@ -166,7 +166,14 @@ class LSQ(nn.Module):
                 self.initialized = True
                 print('Initializing step size to ', self.step_size)
 
+        # Plain
         return lsq_quantize().apply(x, self.step_size, self.bits)
+
+        # Persample scaling
+        # scale = x.mean([1, 2, 3])
+        # scale = scale / scale.mean()
+        #
+        # return lsq_quantize().apply(x / scale, self.step_size, self.bits) * scale
 
 
 class LSQPerChannel(nn.Module):
@@ -182,7 +189,7 @@ class LSQPerChannel(nn.Module):
                 num_bins = 2 ** self.bits - 1
                 self.step_size.copy_(2 * x.abs().mean([1,2,3]) / np.sqrt(num_bins))
                 self.initialized = True
-                print('Initializing step size to ', self.step_size)
+                print('Initializing step size to ', self.step_size.mean())
 
         return lsq_quantize_perchannel().apply(x, self.step_size.abs(), self.bits)
 

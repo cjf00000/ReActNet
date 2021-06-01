@@ -5,6 +5,7 @@ import numpy as np
 import time, datetime
 import torch
 import random
+import glob
 import argparse
 import torch.nn as nn
 import torch.utils
@@ -91,13 +92,13 @@ def main():
 
     model_student = model_student.cuda()
     if args.distributed:
-        model_student = DDP(model_student, device_ids=[args.gpu])
+        model_student = DDP(model_student, device_ids=[args.gpu], find_unused_parameters=True)
 
     print(model_student)
     # TODO hack
-    for name, param in model_student.named_parameters():
-        if name.find('step_size') == -1:
-            param.requires_grad = False
+    # for name, param in model_student.named_parameters():
+    #     if name.find('step_size') == -1:
+    #         param.requires_grad = False
 
     # load model
     criterion_train, criterion_val, model_teacher = \
@@ -157,13 +158,13 @@ def main():
     print('Val acc', valid_top1_acc)
     for epoch in epoch_iter:
         train(epoch,  train_loader, model_student, model_teacher, criterion_train, optimizer, scheduler, logger)
-        print('--------- Step size -------------')
-        for name, param in model_student.named_parameters():
-            if name.find('step_size') != -1:
-                print(name, param.mean().detach().cpu().numpy(),
-                            param.min().detach().cpu().numpy(),
-                            param.max().detach().cpu().numpy(),
-                            param.grad.mean().detach().cpu().numpy())
+        # print('--------- Step size -------------')
+        # for name, param in model_student.named_parameters():
+        #     if name.find('step_size') != -1:
+        #         print(name, param.mean().detach().cpu().numpy(),
+        #                     param.min().detach().cpu().numpy(),
+        #                     param.max().detach().cpu().numpy(),
+        #                     param.grad.mean().detach().cpu().numpy())
         valid_top1_acc = validate(epoch, val_loader, model_student, criterion_val, args, logger)
 
         is_best = False
@@ -194,6 +195,10 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
         logger.register_metric('train.data_time', log.AverageMeter(), log_level=0)
         logger.register_metric('train.time', log.AverageMeter(), log_level=0)
         logger.register_metric('train.ips', log.AverageMeter(), log_level=0)
+        for pname, p in model_student.named_parameters():
+            if 'step_size' in pname:
+                logger.register_metric('step_size/' + pname.replace('.step_size', ''),
+                                       log.AverageMeter(), log_level=1)
 
     model_student.train()
     if model_teacher:
@@ -217,8 +222,8 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
     )
 
     for i, (images, target) in data_iter:
-        if i > 100:
-            break
+        # if i > 200:
+        #     break
         data_time = time.time() - end
         images = images.cuda()
         target = target.cuda()
@@ -257,6 +262,10 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
             logger.log_metric('train.time', batch_time)
             logger.log_metric('train.data_time', data_time)
             logger.log_metric('train.ips', calc_ips(n, batch_time))
+            for pname, p in model_student.named_parameters():
+                if 'step_size' in pname:
+                    logger.log_metric('step_size/' + pname.replace('.step_size', ''),
+                                           p.abs().mean().item())
 
         end = time.time()
 
@@ -325,7 +334,11 @@ def get_logger(args, train_iters, val_iters):
                 ]
         try:
             import wandb
-            wandb.init(project="bnn", entity="jianfeic", config=args, name=args.save)
+            run = wandb.init(project="bnn-imagenet", entity="jianfeic", config=args, name=args.save)
+            code = wandb.Artifact('project-source', type='code')
+            for path in glob.glob('*.py', recursive=True):
+                code.add_file(path)
+            run.log_artifact(code)
             logger_backends.append(log.WandbBackend(wandb))
             print('Logging to wandb...')
         except ImportError:

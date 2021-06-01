@@ -309,7 +309,7 @@ class WandbBackend(object):
         pass
 
     def log_end_epoch(self):
-        print('Wandb log ', self.epoch_metrics)
+        # print('Wandb log ', self.epoch_metrics)
         self.wandb.log(self.epoch_metrics)
         self.epoch_metrics = {}
 
