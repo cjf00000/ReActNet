@@ -14,7 +14,7 @@ from birealnet import get_model
 
 # ckpt_file = 'cifar100_fp18_c64_sgd_wd5e-4_distill_qa/model_best.pth.tar'
 ckpt_file = 'imagenet_fp.pth.tar'
-valdir = '/home/LargeData/Large/ImageNet'
+valdir = '~/data/ImageNet'
 batch_size = 1000
 data = torch.load(ckpt_file)
 checkpoint = data['state_dict']
@@ -25,14 +25,14 @@ for k in checkpoint.keys():
     state_dict[k.replace('module.', '')] = checkpoint[k]
 
 num_classes, _, _, val_loader, val_iters = \
-        get_dataloaders('imagenet', valdir, batch_size, False, workers=24)
+        get_dataloaders('imagenet', valdir, batch_size, False, workers=32)
 
 # model = birealnet18()
 model = get_model('resnet18', num_classes=num_classes, num_channels=64,
-                  qa='fp', qw='fp')
+                  qa='t4', qw='fp')
 
 model = model.cuda()
-model.load_state_dict(state_dict)
+model.load_state_dict(state_dict, strict=False)
 print('State dict loaded.')
 
 # Validation loop

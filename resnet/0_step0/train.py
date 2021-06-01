@@ -94,6 +94,10 @@ def main():
         model_student = DDP(model_student, device_ids=[args.gpu])
 
     print(model_student)
+    # TODO hack
+    for name, param in model_student.named_parameters():
+        if name.find('step_size') == -1:
+            param.requires_grad = False
 
     # load model
     criterion_train, criterion_val, model_teacher = \
@@ -102,20 +106,26 @@ def main():
     # Build optimizer
     all_parameters = model_student.parameters()
     weight_parameters = []
+    step_parameters = []
+    other_parameters = []
     for pname, p in model_student.named_parameters():
         if p.ndimension() == 4 or 'conv' in pname:
             weight_parameters.append(p)
-    weight_parameters_id = list(map(id, weight_parameters))
-    other_parameters = list(filter(lambda p: id(p) not in weight_parameters_id, all_parameters))
+        elif 'step_size' in pname:
+            step_parameters.append(p)
+        else:
+            other_parameters.append(p)
 
-    # optimizer = torch.optim.Adam(
-    #         [{'params': other_parameters},
-    #         {'params': weight_parameters, 'weight_decay': args.weight_decay}],
-    #         lr=args.learning_rate,)
-    optimizer = torch.optim.SGD(
+    # optimizer = torch.optim.SGD(
+    #     [{'params': other_parameters},
+    #      {'params': weight_parameters, 'weight_decay': args.weight_decay},
+    #      {'params': step_parameters, 'momentum': 0.0}],
+    #     lr=args.learning_rate, momentum=args.momentum)
+    optimizer = torch.optim.Adam(
         [{'params': other_parameters},
-         {'params': weight_parameters, 'weight_decay': args.weight_decay}],
-        lr=args.learning_rate, momentum=args.momentum)
+         {'params': weight_parameters, 'weight_decay': args.weight_decay},
+         {'params': step_parameters}],
+        lr=args.learning_rate, betas=(args.momentum, 0.999))
 
     scheduler = lr_cosine_policy(args.learning_rate, args.warmup, args.epochs, logger=logger)
 
@@ -129,15 +139,31 @@ def main():
         checkpoint = torch.load(checkpoint_tar, map_location=lambda storage, loc: storage.cuda(args.gpu))
         # start_epoch = checkpoint['epoch']
         best_top1_acc = checkpoint['best_top1_acc']
-        model_student.load_state_dict(checkpoint['state_dict'], strict=False)
+        state_dict = checkpoint['state_dict']
+        if not args.distributed:
+            state_dict = {k.replace('module.', ''): state_dict[k] for k in state_dict}
+        for k in state_dict:
+            print(k)
+
+        model_student.load_state_dict(state_dict, strict=False)
         print("loaded checkpoint {} epoch = {}" .format(checkpoint_tar, checkpoint['epoch']))
 
     # train the model
     epoch_iter = range(start_epoch, args.epochs)
     if logger is not None:
         epoch_iter = logger.epoch_generator_wrapper(epoch_iter)
+
+    valid_top1_acc = validate(0, val_loader, model_student, criterion_val, args, logger)
+    print('Val acc', valid_top1_acc)
     for epoch in epoch_iter:
         train(epoch,  train_loader, model_student, model_teacher, criterion_train, optimizer, scheduler, logger)
+        print('--------- Step size -------------')
+        for name, param in model_student.named_parameters():
+            if name.find('step_size') != -1:
+                print(name, param.mean().detach().cpu().numpy(),
+                            param.min().detach().cpu().numpy(),
+                            param.max().detach().cpu().numpy(),
+                            param.grad.mean().detach().cpu().numpy())
         valid_top1_acc = validate(epoch, val_loader, model_student, criterion_val, args, logger)
 
         is_best = False
@@ -191,6 +217,8 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
     )
 
     for i, (images, target) in data_iter:
+        if i > 100:
+            break
         data_time = time.time() - end
         images = images.cuda()
         target = target.cuda()

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
-from quantize import BinaryActivation, HardBinaryConv, MultiBitBinaryActivation, MultibitActivation, LSQ, LSQConv
+from quantize import BinaryActivation, HardBinaryConv, MultiBitBinaryActivation, MultibitActivation, LSQ, LSQConv, Quantize, QConv
 
 __all__ = ['birealnet18', 'birealnet34']
 debug = False
@@ -47,6 +47,9 @@ class BasicBlock(nn.Module):
         elif qa[0] == 'l':
             bits = int(qa[1:])
             self.binary_activation = LSQ(bits)
+        elif qa[0] == 't':
+            bits = int(qa[1:])
+            self.binary_activation = Quantize(bits)
         else:
             bits = int(qa[1:])
             self.binary_activation = MultibitActivation(bits)
@@ -55,6 +58,9 @@ class BasicBlock(nn.Module):
             self.binary_conv = HardBinaryConv(inplanes, planes, stride=stride)
         elif qw == 'fp':
             self.binary_conv = conv3x3(inplanes, planes, stride=stride)
+        elif qw == 't':
+            bits = int(qw[1:])
+            self.binary_conv = QConv(inplanes, planes, stride=stride, num_bits=bits)
         else:
             bits = int(qw[1:])
             self.binary_conv = LSQConv(inplanes, planes, stride=stride, num_bits=bits)
