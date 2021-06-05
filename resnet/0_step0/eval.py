@@ -11,9 +11,10 @@ from birealnet import birealnet18
 from utils import log
 from dataloaders import get_dataloaders
 from birealnet import get_model
+from quantize import LSQ, LSQPerChannel
 
 # ckpt_file = 'cifar100_fp18_c64_sgd_wd5e-4_distill_qa/model_best.pth.tar'
-ckpt_file = 'imagenet_fp.pth.tar'
+ckpt_file = 'imagenet_a3w3.pth.tar'
 valdir = '~/data/ImageNet'
 batch_size = 1000
 data = torch.load(ckpt_file)
@@ -29,10 +30,37 @@ num_classes, _, _, val_loader, val_iters = \
 
 # model = birealnet18()
 model = get_model('resnet18', num_classes=num_classes, num_channels=64,
-                  qa='t4', qw='fp')
+                  qa='fp', qw='m3')
+
+# print(model)
+# for name, param in model.named_parameters():
+#     print(name)
+# print(state_dict.keys())
+# print(model.state_dict().keys())
+
+new_state_dict = {}
+num_bits = 3
+for name in state_dict.keys():
+    value = state_dict[name]
+    if 'binary_activation.step_size' in name:
+        for b in range(num_bits):
+            new_name = name.replace('binary_activation.step_size', '') + \
+                                    'binary_conv.act_quantizer.quantizers.{}.step_size'.format(b)
+            new_state_dict[new_name] = value * 2**(num_bits - 1 - b)
+    elif 'binary_conv.quantizer.step_size' in name:
+        for b in range(num_bits):
+            new_name = name.replace('binary_conv.quantizer.step_size', '') + \
+                                    'binary_conv.wt_quantizer.quantizers.{}.step_size'.format(b)
+            new_state_dict[new_name] = value * 2**(num_bits - 1 - b)
+    else:
+        new_state_dict[name] = value
 
 model = model.cuda()
-model.load_state_dict(state_dict, strict=False)
+model.load_state_dict(new_state_dict, strict=True)
+for layer in model.modules():
+    if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel):
+        # print('setting ', layer)
+        layer.initialized = True
 print('State dict loaded.')
 
 # Validation loop

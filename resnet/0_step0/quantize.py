@@ -176,15 +176,23 @@ class LSQ(nn.Module):
                 self.initialized = True
                 print('Initializing step size to ', self.step_size)
 
-        # Plain
-
         return lsq_quantize().apply(x, self.step_size, self.bits)
 
-        # Persample scaling
-        # scale = x.mean([1, 2, 3])
-        # scale = scale / scale.mean()
-        #
-        # return lsq_quantize().apply(x / scale, self.step_size, self.bits) * scale
+
+class MultibitLSQ(nn.Module):
+    def __init__(self, bits):
+        super(MultibitLSQ, self).__init__()
+        self.bits = bits
+        self.quantizers = nn.ModuleList([LSQ(1) for i in range(bits)])
+
+    def forward(self, x):
+        output = 0
+        for quantizer in self.quantizers:
+            quantized = quantizer(x)
+            output = output + quantized
+            x = x - quantized
+
+        return output
 
 
 class LSQPerChannel(nn.Module):
@@ -203,6 +211,22 @@ class LSQPerChannel(nn.Module):
                 print('Initializing step size to ', self.step_size.mean())
 
         return lsq_quantize_perchannel().apply(x, self.step_size.abs(), self.bits)
+
+
+class MultibitLSQPerChannel(nn.Module):
+    def __init__(self, num_channels, bits):
+        super(MultibitLSQPerChannel, self).__init__()
+        self.bits = bits
+        self.quantizers = nn.ModuleList([LSQPerChannel(num_channels, 1) for i in range(bits)])
+
+    def forward(self, x):
+        output = 0
+        for quantizer in self.quantizers:
+            quantized = quantizer(x)
+            output = output + quantized
+            x = x - quantized
+
+        return output
 
 
 class Quantize(nn.Module):
@@ -284,5 +308,22 @@ class QConv(nn.Conv2d):
         quant_weights = self.quantizer(self.weight / scaling_factor) * scaling_factor
 
         y = F.conv2d(x, quant_weights, stride=self.stride, padding=self.padding)
+
+        return y
+
+
+class MultibitLSQConv(nn.Conv2d):
+    def __init__(self, in_chn, out_chn, kernel_size=3, stride=1, padding=1, num_bits=1):
+        super(MultibitLSQConv, self).__init__(in_chn, out_chn, kernel_size, stride, padding)
+        self.act_quantizer = MultibitLSQ(num_bits)
+        self.wt_quantizer = MultibitLSQPerChannel(out_chn, num_bits)
+
+    def forward(self, x):
+        # scaling_factor = self.weight.abs().mean((1, 2, 3)).view(-1, 1, 1, 1)
+        # quant_weights = self.quantizer(self.weight / scaling_factor) * scaling_factor
+        quant_input = self.act_quantizer(x)
+        quant_weights = self.wt_quantizer(self.weight)
+
+        y = F.conv2d(quant_input, quant_weights, stride=self.stride, padding=self.padding)
 
         return y

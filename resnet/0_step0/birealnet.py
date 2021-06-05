@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
-from quantize import BinaryActivation, HardBinaryConv, MultiBitBinaryActivation, MultibitActivation, LSQ, LSQConv, Quantize, QConv
+from quantize import BinaryActivation, HardBinaryConv, MultiBitBinaryActivation, MultibitActivation, LSQ, LSQConv, Quantize, QConv, MultibitLSQConv
 
 __all__ = ['birealnet18', 'birealnet34']
 debug = False
@@ -29,7 +29,6 @@ class LearnableBias(nn.Module):
         return out
 
 
-
 class BasicBlock(nn.Module):
     expansion = 1
 
@@ -54,13 +53,16 @@ class BasicBlock(nn.Module):
             bits = int(qa[1:])
             self.binary_activation = MultibitActivation(bits)
 
-        if qw == 'b':
+        if qw[0] == 'b':
             self.binary_conv = HardBinaryConv(inplanes, planes, stride=stride)
-        elif qw == 'fp':
+        elif qw[0] == 'fp':
             self.binary_conv = conv3x3(inplanes, planes, stride=stride)
-        elif qw == 't':
+        elif qw[0] == 't':
             bits = int(qw[1:])
             self.binary_conv = QConv(inplanes, planes, stride=stride, num_bits=bits)
+        elif qw[0] == 'm':
+            bits = int(qw[1:])
+            self.binary_conv = MultibitLSQConv(inplanes, planes, stride=stride, num_bits=bits)
         else:
             bits = int(qw[1:])
             self.binary_conv = LSQConv(inplanes, planes, stride=stride, num_bits=bits)
