@@ -179,22 +179,6 @@ class LSQ(nn.Module):
         return lsq_quantize().apply(x, self.step_size, self.bits)
 
 
-class MultibitLSQ(nn.Module):
-    def __init__(self, bits):
-        super(MultibitLSQ, self).__init__()
-        self.bits = bits
-        self.quantizers = nn.ModuleList([LSQ(1) for i in range(bits)])
-
-    def forward(self, x):
-        output = 0
-        for quantizer in self.quantizers:
-            quantized = quantizer(x)
-            output = output + quantized
-            x = x - quantized
-
-        return output
-
-
 class LSQPerChannel(nn.Module):
     def __init__(self, num_channels, bits):
         super(LSQPerChannel, self).__init__()
@@ -213,6 +197,24 @@ class LSQPerChannel(nn.Module):
         return lsq_quantize_perchannel().apply(x, self.step_size.abs(), self.bits)
 
 
+class MultibitLSQ(nn.Module):
+    def __init__(self, bits):
+        super(MultibitLSQ, self).__init__()
+        self.bits = bits
+        self.quantizers = nn.ModuleList([LSQ(1) for i in range(bits)])
+
+    def forward(self, x):
+        output = []
+        scale = 2 ** (self.bits - 1)        # Scale: 4, 2, 1, ...
+        for quantizer in self.quantizers:
+            quantized = quantizer(x)
+            output.append(quantized / scale)
+            scale /= 2
+            x = x - quantized
+
+        return torch.cat(output, 1)       # N, C*b, H, W
+
+
 class MultibitLSQPerChannel(nn.Module):
     def __init__(self, num_channels, bits):
         super(MultibitLSQPerChannel, self).__init__()
@@ -220,10 +222,12 @@ class MultibitLSQPerChannel(nn.Module):
         self.quantizers = nn.ModuleList([LSQPerChannel(num_channels, 1) for i in range(bits)])
 
     def forward(self, x):
-        output = 0
+        output = []
+        scale = 2 ** (self.bits - 1)  # Scale: 4, 2, 1, ...
         for quantizer in self.quantizers:
             quantized = quantizer(x)
-            output = output + quantized
+            output.append(x / scale)
+            scale /= 2
             x = x - quantized
 
         return output
@@ -313,17 +317,89 @@ class QConv(nn.Conv2d):
 
 
 class MultibitLSQConv(nn.Conv2d):
-    def __init__(self, in_chn, out_chn, kernel_size=3, stride=1, padding=1, num_bits=1):
-        super(MultibitLSQConv, self).__init__(in_chn, out_chn, kernel_size, stride, padding)
+    def __init__(self, in_chn, out_chn, kernel_size=3, stride=1, padding=1, num_bits=1, full_matrix=False):
+        super(MultibitLSQConv, self).__init__(in_chn * num_bits,
+                                              out_chn * (2 * num_bits - 1),
+                                              kernel_size,
+                                              stride,
+                                              padding)
         self.act_quantizer = MultibitLSQ(num_bits)
-        self.wt_quantizer = MultibitLSQPerChannel(out_chn, num_bits)
+        self.wt_quantizer = LSQPerChannel(out_chn * (2 * num_bits - 1), 1)
+        self.bits = num_bits
+        self.Cout = out_chn
+        self.weight_mask = torch.zeros_like(self.weight).cuda() # TODO hack
+        self.full_matrix = full_matrix
 
-    def forward(self, x):
-        # scaling_factor = self.weight.abs().mean((1, 2, 3)).view(-1, 1, 1, 1)
-        # quant_weights = self.quantizer(self.weight / scaling_factor) * scaling_factor
+    def init_from(self, weight, step_size):
+        with torch.no_grad():
+            # weight: [Cout, C, kH, kW]
+            # step_size: [Cout]
+            Cout, C, _, _ = weight.shape
+
+            # convert integer weight to binary string
+            lq = LSQPerChannel(Cout, self.bits).cuda()
+            lq.initialized = True
+            lq.step_size.copy_(step_size)
+
+            wq = MultibitLSQPerChannel(Cout, self.bits).cuda()
+            for layer in wq.modules():
+                if isinstance(layer, LSQPerChannel):
+                    layer.initialized = True
+            for b in range(self.bits):
+                wq.quantizers[b].step_size.copy_(step_size * 2**(self.bits - 1 - b))
+            for b in range(self.bits * 2 - 1):
+                self.wt_quantizer.step_size[Cout*b:Cout*(b+1)] = step_size
+
+            weight_groups = wq(weight)
+            qweight = lq(weight)
+            print('---------')
+            print(self.weight_mask.requires_grad)
+            # print(weight_groups[0][0,0,0], wq.quantizers[0].step_size[0])
+            # print(weight_groups[1][0, 0, 0], wq.quantizers[1].step_size[0])
+            # print(weight_groups[2][0, 0, 0], wq.quantizers[2].step_size[0])
+            # print('quantized weight diff ', weight.norm(),
+            #       (weight - weight_groups[0]*4 - weight_groups[1]*2 - weight_groups[2]).norm(),
+            #       (qweight - weight_groups[0]*4 - weight_groups[1]*2 - weight_groups[2]).norm())
+
+            for b_a in range(self.bits):
+                for b_w in range(self.bits):
+                    b_out = b_a + b_w
+                    self.weight[Cout*b_out:Cout*(b_out+1), C*b_a:C*(b_a+1)] = weight_groups[b_w]
+                    self.weight_mask[Cout*b_out:Cout*(b_out+1), C*b_a:C*(b_a+1)] = 1.0
+
+            # Rationality check
+            self.wt_quantizer.initialized = True
+            myweight = self.wt_quantizer(self.weight) * self.weight_mask
+
+            print(self.weight.norm(), (self.weight - myweight).norm())
+            for b_a in range(self.bits):
+                aw = 0
+                for b_w in range(self.bits):
+                    b_out = b_a + b_w
+                    aw = aw + myweight[Cout*b_out:Cout*(b_out+1), C*b_a:C*(b_a+1)] * 2**(self.bits-1-b_w)
+
+                print(weight.norm(), aw.norm(), (aw - weight).norm(), (aw - qweight).norm())
+
+    def forward(self, x):       # x: [N, C, H, W]
+        # quant_input: [N, Cb, H, W]
         quant_input = self.act_quantizer(x)
-        quant_weights = self.wt_quantizer(self.weight)
 
-        y = F.conv2d(quant_input, quant_weights, stride=self.stride, padding=self.padding)
+        # Rationality Check
+        C = x.shape[1]
+        qinput = 0
+        for i in range(self.bits):
+            qinput = qinput + quant_input[:, C*i:C*(i+1)] * 2**(self.bits - 1 - i)
+
+        # quant_weight: [Cout*(2b-1), Cb, kH, kW]
+        quant_weights = self.wt_quantizer(self.weight)
+        if not self.full_matrix:
+            quant_weights = quant_weights * self.weight_mask
+
+        # yb: [N, Cout*(2b-1), H, W]
+        yb = F.conv2d(quant_input, quant_weights, stride=self.stride, padding=self.padding)
+        y = 0   # y: [N, C, H, W]
+        for b in range(2 * self.bits - 1):
+            scale = 2 ** (2 * self.bits - 2 - b)
+            y = y + yb[:, b*self.Cout:(b+1)*self.Cout] * scale
 
         return y

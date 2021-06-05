@@ -200,3 +200,33 @@ def get_model(arch, num_classes, num_channels, qa='fp', qw='fp'):
               'resnet34': birealnet34,
               'resnet68': birealnet68}
     return models[arch](num_classes=num_classes, num_channels=num_channels, qa=qa, qw=qw)
+
+
+def init_model_from(model, state_dict, num_bits):
+    print(state_dict.keys())
+    print(model.state_dict().keys())
+    from quantize import LSQ, LSQPerChannel, MultibitLSQConv
+
+    new_state_dict = {}
+    for name in state_dict.keys():
+        value = state_dict[name]
+        if 'binary_activation.step_size' in name:
+            for b in range(num_bits):
+                new_name = name.replace('binary_activation.step_size', '') + \
+                           'binary_conv.act_quantizer.quantizers.{}.step_size'.format(b)
+                new_state_dict[new_name] = value * 2 ** (num_bits - 1 - b)
+        elif 'binary_conv' in name:
+            pass
+        else:
+            new_state_dict[name] = value
+
+    model.load_state_dict(new_state_dict, strict=False)
+    for name, layer in model.named_modules():
+        if isinstance(layer, MultibitLSQConv):
+            print(name)
+            layer.init_from(state_dict[name + '.weight'], state_dict[name + '.quantizer.step_size'])
+        if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel):
+            # print('setting ', layer)
+            layer.initialized = True
+
+    print('State dict loaded.')

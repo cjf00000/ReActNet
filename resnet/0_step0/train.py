@@ -20,7 +20,7 @@ from utils import log
 from utils.log import lr_cosine_policy
 from torchvision import datasets, transforms
 from torch.cuda.amp import autocast, GradScaler
-from birealnet import get_model
+from birealnet import get_model, init_model_from
 import torchvision.models as models
 from dataloaders import get_dataloaders
 
@@ -143,11 +143,22 @@ def main():
         state_dict = checkpoint['state_dict']
         if not args.distributed:
             state_dict = {k.replace('module.', ''): state_dict[k] for k in state_dict}
+        else:
+            find_module = False
+            for k in state_dict:
+                if 'module' in k:
+                    find_module = True
+            if not find_module:
+                state_dict = {'module.'+k: state_dict[k] for k in state_dict}
         for k in state_dict:
             print(k)
 
-        model_student.load_state_dict(state_dict, strict=False)
-        print("loaded checkpoint {} epoch = {}" .format(checkpoint_tar, checkpoint['epoch']))
+        if args.qw[0] != 'm':
+            model_student.load_state_dict(state_dict, strict=False)
+        else:
+            init_model_from(model_student, state_dict, int(args.qw[1:]))
+
+        print("loaded checkpoint {} epoch = {}".format(checkpoint_tar, checkpoint['epoch']))
 
     # train the model
     epoch_iter = range(start_epoch, args.epochs)
