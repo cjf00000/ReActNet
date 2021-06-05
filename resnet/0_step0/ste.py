@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 from matplotlib import pyplot as plt
-from quantize import BinaryActivation
+from quantize import MultiBitBinaryActivation, BasicBinaryActivation
 
 
 class MultiBitBinaryActivation(nn.Module):
     def __init__(self, bits):
         super(MultiBitBinaryActivation, self).__init__()
         self.bits = bits
-        self.binact = BinaryActivation()
+        self.binact = BasicBinaryActivation()
 
     def forward(self, x):
         result = []
@@ -16,14 +16,15 @@ class MultiBitBinaryActivation(nn.Module):
         for i in range(self.bits):
             q = self.binact(x)
             result.append(q)
-            x = x - scale * q.detach()
+            # x = x - scale * q.detach()
+            x = x - scale * q
             scale /= 2
 
         return torch.stack(result, 0)
 
 
 if __name__ == '__main__':
-    x = torch.linspace(-3, 3, 1000)
+    x = torch.linspace(-4, 4, 1000)
     x.requires_grad_()
 
     fig, ax = plt.subplots(3, 3)

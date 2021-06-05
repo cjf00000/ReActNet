@@ -19,6 +19,21 @@ class binary_activation(torch.autograd.Function):
         return grad_output * grad
 
 
+class basic_binary_activation(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        out = torch.sign(input)
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, = ctx.saved_tensors
+        # clip_mask = 0.5 * torch.logical_and(input >= -2, input <= 2).float()
+        clip_mask = torch.logical_and(input >= -1, input <= 1).float()
+        return grad_output * clip_mask
+
+
 class multi_bit_quantize(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, bits):
@@ -127,19 +142,14 @@ class BinaryActivation(nn.Module):
 
     def forward(self, x):
         return binary_activation().apply(x)
-        # out_forward = torch.sign(x)
-        # #out_e1 = (x^2 + 2*x)
-        # #out_e2 = (-x^2 + 2*x)
-        # out_e_total = 0
-        # mask1 = x < -1
-        # mask2 = x < 0
-        # mask3 = x < 1
-        # out1 = (-1) * mask1.type(torch.float32) + (x*x + 2*x) * (1-mask1.type(torch.float32))
-        # out2 = out1 * mask2.type(torch.float32) + (-x*x + 2*x) * (1-mask2.type(torch.float32))
-        # out3 = out2 * mask3.type(torch.float32) + 1 * (1- mask3.type(torch.float32))
-        # out = out_forward.detach() - out3.detach() + out3
-        #
-        # return out
+
+
+class BasicBinaryActivation(nn.Module):
+    def __init__(self):
+        super(BasicBinaryActivation, self).__init__()
+
+    def forward(self, x):
+        return basic_binary_activation().apply(x)
 
 
 class MultibitActivation(nn.Module):
@@ -167,6 +177,7 @@ class LSQ(nn.Module):
                 print('Initializing step size to ', self.step_size)
 
         # Plain
+
         return lsq_quantize().apply(x, self.step_size, self.bits)
 
         # Persample scaling
@@ -207,7 +218,7 @@ class MultiBitBinaryActivation(nn.Module):  # Extension of binary activation for
     def __init__(self, bits):
         super(MultiBitBinaryActivation, self).__init__()
         self.bits = bits
-        self.binact = BinaryActivation()
+        self.binact = BasicBinaryActivation()
         self.scale = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
     def forward(self, x):
