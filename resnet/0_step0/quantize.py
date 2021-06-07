@@ -215,9 +215,25 @@ class MultibitLSQ(nn.Module):
         return torch.cat(output, 1)       # N, C*b, H, W
 
 
-class MultibitLSQPerChannel(nn.Module):
+class MultibitLSQNoScale(nn.Module):
+    def __init__(self, bits):
+        super(MultibitLSQNoScale, self).__init__()
+        self.bits = bits
+        self.quantizers = nn.ModuleList([LSQ(1) for i in range(bits)])
+
+    def forward(self, x):
+        output = []
+        for quantizer in self.quantizers:
+            quantized = quantizer(x)
+            output.append(quantized)
+            x = x - quantized
+
+        return torch.cat(output, 1)       # N, C*b, H, W
+
+
+class MultibitLSQPerChannelInit(nn.Module):     # Used for initializing MultibitLSQConv
     def __init__(self, num_channels, bits):
-        super(MultibitLSQPerChannel, self).__init__()
+        super(MultibitLSQPerChannelInit, self).__init__()
         self.bits = bits
         self.quantizers = nn.ModuleList([LSQPerChannel(num_channels, 1) for i in range(bits)])
 
@@ -341,7 +357,7 @@ class MultibitLSQConv(nn.Conv2d):
             lq.initialized = True
             lq.step_size.copy_(step_size)
 
-            wq = MultibitLSQPerChannel(Cout, self.bits).cuda()
+            wq = MultibitLSQPerChannelInit(Cout, self.bits).cuda()
             for layer in wq.modules():
                 if isinstance(layer, LSQPerChannel):
                     layer.initialized = True
@@ -402,4 +418,27 @@ class MultibitLSQConv(nn.Conv2d):
             scale = 2 ** (2 * self.bits - 2 - b)
             y = y + yb[:, b*self.Cout:(b+1)*self.Cout] * scale
 
+        return y
+
+
+class MultibitLSQConvAct(nn.Conv2d):        # Only quantize activation
+    def __init__(self, in_chn, out_chn, kernel_size=3, stride=1, padding=1, num_bits=1):
+        super(MultibitLSQConvAct, self).__init__(in_chn * num_bits,
+                                              out_chn,
+                                              kernel_size,
+                                              stride,
+                                              padding)
+        self.act_quantizer = MultibitLSQNoScale(num_bits)
+        self.bits = num_bits
+        self.C = in_chn
+
+    def init_from(self, weight, step_size):
+        with torch.no_grad():
+            for b in range(self.bits):
+                self.weight[:, b*self.C:(b+1)*self.C] = weight
+
+    def forward(self, x):       # x: [N, C, H, W]
+        # quant_input: [N, Cb, H, W]
+        quant_input = self.act_quantizer(x)
+        y = F.conv2d(quant_input, self.weight, stride=self.stride, padding=self.padding)
         return y

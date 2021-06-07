@@ -92,7 +92,7 @@ def main():
 
     model_student = model_student.cuda()
     if args.distributed:
-        model_student = DDP(model_student, device_ids=[args.gpu], find_unused_parameters=True)
+        model_student = DDP(model_student, device_ids=[args.gpu], find_unused_parameters=False)
 
     print(model_student)
     # TODO hack
@@ -153,10 +153,13 @@ def main():
         for k in state_dict:
             print(k)
 
-        if args.qw[0] != 'm':
+        if args.qw[0] != 'm' and args.qw[0] != 'a':
             model_student.load_state_dict(state_dict, strict=False)
         else:
-            init_model_from(model_student, state_dict, int(args.qw[1:]))
+            initialized = True
+            if args.qw[0] == 'a':
+                initialized = False
+            init_model_from(model_student, state_dict, int(args.qw[1:]), initialized=initialized)
 
         print("loaded checkpoint {} epoch = {}".format(checkpoint_tar, checkpoint['epoch']))
 

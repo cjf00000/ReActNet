@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
-from quantize import BinaryActivation, HardBinaryConv, MultiBitBinaryActivation, MultibitActivation, LSQ, LSQConv, Quantize, QConv, MultibitLSQConv
+from quantize import BinaryActivation, HardBinaryConv, MultiBitBinaryActivation, MultibitActivation, LSQ, LSQConv, Quantize, QConv, MultibitLSQConv, MultibitLSQConvAct
 
 __all__ = ['birealnet18', 'birealnet34']
 debug = False
@@ -63,6 +63,9 @@ class BasicBlock(nn.Module):
         elif qw[0] == 'm':
             bits = int(qw[1:])
             self.binary_conv = MultibitLSQConv(inplanes, planes, stride=stride, num_bits=bits)
+        elif qw[0] == 'a':
+            bits = int(qw[1:])
+            self.binary_conv = MultibitLSQConvAct(inplanes, planes, stride=stride, num_bits=bits)
         else:
             bits = int(qw[1:])
             self.binary_conv = LSQConv(inplanes, planes, stride=stride, num_bits=bits)
@@ -202,7 +205,7 @@ def get_model(arch, num_classes, num_channels, qa='fp', qw='fp'):
     return models[arch](num_classes=num_classes, num_channels=num_channels, qa=qa, qw=qw)
 
 
-def init_model_from(model, state_dict, num_bits):
+def init_model_from(model, state_dict, num_bits, initialized=True):
     print(state_dict.keys())
     print(model.state_dict().keys())
     from quantize import LSQ, LSQPerChannel, MultibitLSQConv
@@ -222,11 +225,12 @@ def init_model_from(model, state_dict, num_bits):
 
     model.load_state_dict(new_state_dict, strict=False)
     for name, layer in model.named_modules():
-        if isinstance(layer, MultibitLSQConv):
+        if isinstance(layer, MultibitLSQConv) or isinstance(layer, MultibitLSQConvAct):
             print(name)
-            layer.init_from(state_dict[name + '.weight'], state_dict[name + '.quantizer.step_size'])
+            layer.init_from(state_dict[name + '.weight'], state_dict.get(name + '.quantizer.step_size', ''))
         if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel):
             # print('setting ', layer)
-            layer.initialized = True
+            if initialized:
+                layer.initialized = True
 
     print('State dict loaded.')
