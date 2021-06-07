@@ -37,6 +37,7 @@ from PIL import Image
 from functools import partial
 sys.path.append("../../")
 from utils.utils import *
+from mixup import MixUpWrapper
 
 # from image_classification.autoaugment import AutoaugmentImageNetPolicy
 
@@ -406,7 +407,7 @@ def get_pytorch_train_loader_cifar10(data_path, batch_size, num_classes, one_hot
         collate_fn=fast_collate, drop_last=False)
 
     # return train_loader, len(train_loader)
-    return PrefetchedWrapper(train_loader, num_classes, fp16, one_hot), len(train_loader)
+    return PrefetchedWrapper(train_loader, 0, num_classes, one_hot), len(train_loader)
 
 
 def get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers=5, _worker_init_fn=None, fp16=False):
@@ -427,19 +428,24 @@ def get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, one_hot, 
             num_workers=workers, worker_init_fn=_worker_init_fn, pin_memory=True,
             collate_fn=fast_collate)
 
-    return PrefetchedWrapper(val_loader, num_classes, fp16, one_hot), len(val_loader)
+    return PrefetchedWrapper(val_loader, 0, num_classes, one_hot), len(val_loader)
 
 
-def get_dataloaders(dataset, data_path, batch_size, one_hot, workers=5, _worker_init_fn=None, fp16=False):
+def get_dataloaders(dataset, data_path, batch_size, mixup, workers=5, _worker_init_fn=None, fp16=False):
+    one_hot = mixup > 0.0
     if dataset == 'cifar10' or dataset == 'cifar100':
         num_classes = 10 if dataset == 'cifar10' else 100
         train_loader, train_iters = get_pytorch_train_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers, _worker_init_fn, fp16)
-        val_loader, val_iters = get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, one_hot, workers, _worker_init_fn, fp16)
+        val_loader, val_iters = get_pytorch_val_loader_cifar10(data_path, batch_size, num_classes, False, workers, _worker_init_fn, fp16)
+        if mixup > 0.0:
+            train_loader = MixUpWrapper(mixup, num_classes, train_loader)
         return num_classes, train_loader, train_iters, val_loader, val_iters
     elif dataset == 'imagenet':
         num_classes = 1000
         train_loader, train_iters = get_pytorch_train_loader(data_path, 224, batch_size, num_classes, one_hot, workers=workers)
-        val_loader, val_iters = get_pytorch_val_loader(data_path, 224, batch_size, num_classes, one_hot, workers=workers)
+        val_loader, val_iters = get_pytorch_val_loader(data_path, 224, batch_size, num_classes, False, workers=workers)
+        if mixup > 0.0:
+            train_loader = MixUpWrapper(mixup, num_classes, train_loader)
         return num_classes, train_loader, train_iters, val_loader, val_iters
     else:
         raise RuntimeError('Unsupported Dataset')

@@ -138,6 +138,8 @@ def adjust_learning_rate(optimizer, epoch, args):
 
 
 def accuracy(output, target, topk=(1,)):
+    if len(target.shape) == 2:
+        target = target.max(1)[1]
     """Computes the accuracy over the k top predictions for the specified values of k"""
     with torch.no_grad():
         maxk = max(topk)

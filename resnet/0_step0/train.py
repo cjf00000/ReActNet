@@ -23,6 +23,7 @@ from torch.cuda.amp import autocast, GradScaler
 from birealnet import get_model, init_model_from
 import torchvision.models as models
 from dataloaders import get_dataloaders
+from mixup import *
 
 parser = argparse.ArgumentParser("birealnet18")
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
@@ -39,6 +40,8 @@ parser.add_argument('--label_smooth', type=float, default=0.1, help='label smoot
 parser.add_argument('--teacher', type=str, default='none', help='Teacher Architecture')
 parser.add_argument('--arch', type=str, default='resnet18', help='Student Architecture')
 parser.add_argument('--channel', type=int, default=64, help='Number of channels')
+parser.add_argument('--mixup', type=float, default=0.0, help='Mixup')
+parser.add_argument('--label_smoothing', type=float, default=0.0, help='label smoothing')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument("--local_rank", default=0, type=int)
@@ -47,6 +50,7 @@ parser.add_argument('--print-freq', '-p', default=100, type=int,
 parser.add_argument("--amp", action="store_true", help="Run model AMP (automatic mixed precision) mode.",)
 parser.add_argument("--qa", type=str, default='fp', help="fp, b, q1, q2, q3, m1, m2, m3, l1, l2, l3...",)
 parser.add_argument("--qw", type=str, default='fp', help="fp, b, l1, l2, l3...",)
+parser.add_argument("--project", type=str, default='bnn-imagenet', help="wandb project",)
 
 args = parser.parse_args()
 
@@ -81,7 +85,7 @@ def main():
 
     # Build dataloaders
     num_classes, train_loader, train_iters, val_loader, val_iters = \
-        get_dataloaders(args.dataset, args.data, args.batch_size, False, workers=args.workers)
+        get_dataloaders(args.dataset, args.data, args.batch_size, args.mixup, workers=args.workers)
 
     # Setup logger
     logger = get_logger(args, train_iters, val_iters)
@@ -102,7 +106,7 @@ def main():
 
     # load model
     criterion_train, criterion_val, model_teacher = \
-        get_criterion(args.dataset, args.teacher, num_classes, args.gpu)
+        get_criterion(args.dataset, args.teacher, num_classes, args.gpu, args.mixup, args.label_smoothing)
 
     # Build optimizer
     all_parameters = model_student.parameters()
@@ -348,7 +352,7 @@ def get_logger(args, train_iters, val_iters):
                 ]
         try:
             import wandb
-            run = wandb.init(project="bnn-imagenet", entity="jianfeic", config=args, name=args.save)
+            run = wandb.init(project=args.project, entity="jianfeic", config=args, name=args.save)
             code = wandb.Artifact('project-source', type='code')
             for path in glob.glob('*.py', recursive=True):
                 code.add_file(path)
@@ -368,13 +372,21 @@ def get_logger(args, train_iters, val_iters):
     return logger
 
 
-def get_criterion(dataset, teacher, num_classes, gpu):
+def get_criterion(dataset, teacher, num_classes, gpu, mixup, label_smoothing):
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.cuda()
+
+    criterion_kd = None
+    if mixup > 0.0:
+        criterion_kd = NLLMultiLabelSmooth(label_smoothing)
+    elif label_smoothing > 0.0:
+        criterion_kd = LabelSmoothing(label_smoothing)
+    criterion_kd = criterion_kd.cuda()
+
     # criterion_smooth = CrossEntropyLabelSmooth(CLASSES, args.label_smooth)
     # criterion_smooth = criterion_smooth.cuda()
-    if teacher == 'none':
-        return criterion, criterion, None
+    if teacher == 'none' or criterion_kd is not None:
+        return criterion_kd, criterion, None
 
     if dataset == 'imagenet':
         # load model

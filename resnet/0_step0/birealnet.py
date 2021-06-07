@@ -51,10 +51,10 @@ class BasicBlock(nn.Module):
             self.binary_activation = Quantize(bits)
         elif qa[0] == 's':
             bits = int(qa[1:])
-            self.binary_conv = MultibitLSQShared(bits)
+            self.binary_activation = MultibitLSQShared(bits)
         elif qa[0] == 'e':
             bits = int(qa[1:])
-            self.binary_conv = MultibitLSQNoExpand(bits)
+            self.binary_activation = MultibitLSQNoExpand(bits)
         else:
             bits = int(qa[1:])
             self.binary_activation = MultibitActivation(bits)
