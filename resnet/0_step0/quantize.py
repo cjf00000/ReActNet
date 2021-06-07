@@ -231,6 +231,47 @@ class MultibitLSQNoScale(nn.Module):
         return torch.cat(output, 1)       # N, C*b, H, W
 
 
+class MultibitLSQShared(nn.Module):
+    def __init__(self, bits):
+        super(MultibitLSQShared, self).__init__()
+        self.bits = bits
+        self.step_size = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        self.initialized = False
+
+    def forward(self, x):
+        if not self.initialized:
+            with torch.no_grad():
+                num_bins = 2 ** self.bits - 1
+                self.step_size.copy_(2 * x.abs().mean() / np.sqrt(num_bins))
+                self.initialized = True
+                print('Initializing step size to ', self.step_size)
+
+        output = 0
+        for b in range(self.bits):
+            scale = 2 ** (self.bits - 1 - b)
+            quantized = lsq_quantize().apply(x, self.step_size * scale, 1)
+            output = output + quantized
+            x = x - quantized
+
+        return output
+
+
+class MultibitLSQNoExpand(nn.Module):   # TODO better initialization?
+    def __init__(self, bits):
+        super(MultibitLSQNoExpand, self).__init__()
+        self.bits = bits
+        self.quantizers = nn.ModuleList([LSQ(1) for i in range(bits)])
+
+    def forward(self, x):
+        output = 0
+        for quantizer in self.quantizers:
+            quantized = quantizer(x)
+            output = output + quantized
+            x = x - quantized
+
+        return output
+
+
 class MultibitLSQPerChannelInit(nn.Module):     # Used for initializing MultibitLSQConv
     def __init__(self, num_channels, bits):
         super(MultibitLSQPerChannelInit, self).__init__()

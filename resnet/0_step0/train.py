@@ -92,7 +92,7 @@ def main():
 
     model_student = model_student.cuda()
     if args.distributed:
-        model_student = DDP(model_student, device_ids=[args.gpu], find_unused_parameters=False)
+        model_student = DDP(model_student, device_ids=[args.gpu], find_unused_parameters=True)
 
     print(model_student)
     # TODO hack

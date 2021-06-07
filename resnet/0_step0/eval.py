@@ -30,7 +30,7 @@ num_classes, _, _, val_loader, val_iters = \
 
 # model = birealnet18()
 model = get_model('resnet18', num_classes=num_classes, num_channels=64,
-                  qa='fp', qw='a3')
+                  qa='e3', qw='fp')
 model = model.cuda()
 # model.load_state_dict(state_dict, strict=False)
 init_model_from(model, state_dict, 3)
