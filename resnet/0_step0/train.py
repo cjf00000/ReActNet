@@ -96,7 +96,7 @@ def main():
 
     model_student = model_student.cuda()
     if args.distributed:
-        model_student = DDP(model_student, device_ids=[args.gpu], find_unused_parameters=True)
+        model_student = DDP(model_student, device_ids=[args.gpu], find_unused_parameters=False)
 
     print(model_student)
     # TODO hack
@@ -381,12 +381,14 @@ def get_criterion(dataset, teacher, num_classes, gpu, mixup, label_smoothing):
         criterion_kd = NLLMultiLabelSmooth(label_smoothing)
     elif label_smoothing > 0.0:
         criterion_kd = LabelSmoothing(label_smoothing)
-    criterion_kd = criterion_kd.cuda()
+    if criterion_kd:
+        criterion_kd = criterion_kd.cuda()
+        return criterion_kd, criterion, None
 
     # criterion_smooth = CrossEntropyLabelSmooth(CLASSES, args.label_smooth)
     # criterion_smooth = criterion_smooth.cuda()
-    if teacher == 'none' or criterion_kd is not None:
-        return criterion_kd, criterion, None
+    if teacher == 'none':
+        return criterion, criterion, None
 
     if dataset == 'imagenet':
         # load model

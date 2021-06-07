@@ -263,6 +263,15 @@ class MultibitLSQNoExpand(nn.Module):   # TODO better initialization?
         self.quantizers = nn.ModuleList([LSQ(1) for i in range(bits)])
 
     def forward(self, x):
+        # if not self.quantizers[0].initialized:
+        #     with torch.no_grad():
+        #         num_bins = 2 ** self.bits - 1
+        #         base_ss = 2 * x.abs().mean() / np.sqrt(num_bins)
+        #         for b in range(self.bits):
+        #             self.quantizers[b].step_size.copy_(base_ss * 2 ** (self.bits - 1 - b))
+        #             self.quantizers[b].initialized = True
+        #             print('Initializing step size of {} to {}'.format(b, self.quantizers[b].step_size))
+
         output = 0
         for quantizer in self.quantizers:
             quantized = quantizer(x)
