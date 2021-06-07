@@ -53,9 +53,9 @@ class BasicBlock(nn.Module):
             bits = int(qa[1:])
             self.binary_activation = MultibitActivation(bits)
 
-        if qw[0] == 'b':
+        if qw == 'b':
             self.binary_conv = HardBinaryConv(inplanes, planes, stride=stride)
-        elif qw[0] == 'fp':
+        elif qw == 'fp':
             self.binary_conv = conv3x3(inplanes, planes, stride=stride)
         elif qw[0] == 't':
             bits = int(qw[1:])
