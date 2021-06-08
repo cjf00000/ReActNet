@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import quant.cpp_extension.calc_quant_bin as ext
 
 
 class binary_activation(torch.autograd.Function):
@@ -256,6 +257,22 @@ class MultibitLSQShared(nn.Module):
         return output
 
 
+def compute_histogram(x, num_bins=256):
+    x = x.view(-1)
+    range = x.abs().max()
+    scale = (num_bins - 1) / range
+    x = (x * scale).clamp(0, num_bins-1).round()
+    hist = torch.zeros(num_bins, device=x.device)
+    hist.scatter_add_(dim=0, index=x.to(torch.int64), src=torch.ones_like(x))
+    return hist, scale
+
+
+def get_lsq_step_size(x):
+    hist, scale = compute_histogram(x)
+    l, r = ext.calc_quant_bin(hist.cpu())
+    return (l+r)/scale, (r-l)/scale
+
+
 class MultibitLSQNoExpand(nn.Module):   # TODO better initialization?
     def __init__(self, bits):
         super(MultibitLSQNoExpand, self).__init__()
@@ -263,8 +280,15 @@ class MultibitLSQNoExpand(nn.Module):   # TODO better initialization?
         self.quantizers = nn.ModuleList([LSQ(1) for i in range(bits)])
 
     def forward(self, x):
-        # if not self.quantizers[0].initialized:
-        #     with torch.no_grad():
+        if not self.quantizers[0].initialized:
+            with torch.no_grad():
+                ss0, ss1 = get_lsq_step_size(x)
+                ss = [ss0, ss1]
+                for b in range(self.bits):
+                    self.quantizers[b].step_size.copy_(ss[b])
+                    self.quantizers[b].initialized = True
+                    print('Initializing step size of {} to {}'.format(b, self.quantizers[b].step_size))
+
         #         num_bins = 2 ** self.bits - 1
         #         base_ss = 2 * x.abs().mean() / np.sqrt(num_bins)
         #         for b in range(self.bits):

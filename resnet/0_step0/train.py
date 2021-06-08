@@ -217,6 +217,8 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
             if 'step_size' in pname:
                 logger.register_metric('step_size/' + pname.replace('.step_size', ''),
                                        log.AverageMeter(), log_level=1)
+                logger.register_metric('step_size/' + pname.replace('.step_size', '') + '/grad',
+                                       log.AverageMeter(), log_level=1)
 
     model_student.train()
     if model_teacher:
@@ -284,6 +286,8 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
                 if 'step_size' in pname:
                     logger.log_metric('step_size/' + pname.replace('.step_size', ''),
                                            p.abs().mean().item())
+                    logger.log_metric('step_size/' + pname.replace('.step_size', '') + '/grad',
+                                      p.grad.abs().mean().item())
 
         end = time.time()
 

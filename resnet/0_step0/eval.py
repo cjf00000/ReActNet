@@ -14,7 +14,7 @@ from birealnet import get_model, init_model_from
 from quantize import LSQ, LSQPerChannel
 
 # ckpt_file = 'cifar100_fp18_c64_sgd_wd5e-4_distill_qa/model_best.pth.tar'
-ckpt_file = 'imagenet_a3.pth.tar'
+ckpt_file = 'imagenet_fp.pth.tar'
 valdir = '~/data/ImageNet'
 batch_size = 1000
 data = torch.load(ckpt_file)
@@ -30,10 +30,10 @@ num_classes, _, _, val_loader, val_iters = \
 
 # model = birealnet18()
 model = get_model('resnet18', num_classes=num_classes, num_channels=64,
-                  qa='e3', qw='fp')
+                  qa='fp', qw='fp')
 model = model.cuda()
-# model.load_state_dict(state_dict, strict=False)
-init_model_from(model, state_dict, 3)
+model.load_state_dict(state_dict, strict=False)
+# init_model_from(model, state_dict, 3)
 # for name, layer in model.named_modules():
 #     if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel):
 #         layer.initialized = True
@@ -47,10 +47,10 @@ start_t = time.time()
 num_images = 50000
 with torch.no_grad():
     for i, (images, target) in enumerate(val_loader):
-        # if i == 0:
-        #     birealnet.debug = True
-        # else:
-        #     birealnet.debug = False
+        if i == 0:
+            birealnet.debug = True
+        else:
+            birealnet.debug = False
 
         images = images.cuda()
         target = target.cuda()
