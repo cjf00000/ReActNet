@@ -20,7 +20,7 @@ from utils import log
 from utils.log import lr_cosine_policy
 from torchvision import datasets, transforms
 from torch.cuda.amp import autocast, GradScaler
-from birealnet import get_model, init_model_from
+from birealnet import get_model, init_model_from, init_ea_model_from
 import torchvision.models as models
 from dataloaders import get_dataloaders
 from mixup import *
@@ -157,6 +157,8 @@ def main():
         for k in state_dict:
             print(k)
 
+        # TODO hack
+        # init_ea_model_from(model_student, state_dict, 2)
         if args.qw[0] != 'm' and args.qw[0] != 'a':
             model_student.load_state_dict(state_dict, strict=False)
         else:
@@ -217,7 +219,7 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
             if 'step_size' in pname:
                 logger.register_metric('step_size/' + pname.replace('.step_size', ''),
                                        log.AverageMeter(), log_level=1)
-                logger.register_metric('step_size/' + pname.replace('.step_size', '') + '/grad',
+                logger.register_metric('step_size/' + pname.replace('.step_size', '') + '.grad',
                                        log.AverageMeter(), log_level=1)
 
     model_student.train()
@@ -286,7 +288,7 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
                 if 'step_size' in pname:
                     logger.log_metric('step_size/' + pname.replace('.step_size', ''),
                                            p.abs().mean().item())
-                    logger.log_metric('step_size/' + pname.replace('.step_size', '') + '/grad',
+                    logger.log_metric('step_size/' + pname.replace('.step_size', '') + '.grad',
                                       p.grad.abs().mean().item())
 
         end = time.time()

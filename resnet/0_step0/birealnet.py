@@ -240,3 +240,28 @@ def init_model_from(model, state_dict, num_bits, initialized=True):
                 layer.initialized = True
 
     print('State dict loaded.')
+
+
+def init_ea_model_from(model, state_dict, num_bits, initialized=True):
+    print(state_dict.keys())
+    print(model.state_dict().keys())
+    from quantize import LSQ, LSQPerChannel, MultibitLSQConv
+
+    new_state_dict = {}
+    for name in state_dict.keys():
+        value = state_dict[name]
+        if 'step_size' in name:
+            for b in range(num_bits):
+                new_name = name.replace('step_size', '') + \
+                           'quantizers.{}.step_size'.format(b)
+                new_state_dict[new_name] = value * 2 ** (num_bits - 1 - b)
+        else:
+            new_state_dict[name] = value
+
+    model.load_state_dict(new_state_dict, strict=False)
+    for name, layer in model.named_modules():
+        if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel):
+            if initialized:
+                layer.initialized = True
+
+    print('State dict loaded.')
