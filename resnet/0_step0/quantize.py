@@ -103,6 +103,30 @@ class lsq_quantize(torch.autograd.Function):
         return grad_output * mask.float(), (grad_output * ss_gradient).sum(), None
 
 
+class binary_lsq(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, scale):
+        num_features = input.numel()
+        grad_scale = 1.0 / np.sqrt(num_features)
+
+        # Forward
+        eps = 1e-7
+        scale = scale + eps
+        sgn = torch.sign(input)
+        quantized = sgn * scale / 2
+
+        # Step size gradient
+        mask = torch.logical_and(input >= -scale / 2, input <= scale / 2)
+        ss_gradient = sgn * (0.5 * grad_scale)
+        ctx.save_for_backward(mask, ss_gradient)
+        return quantized
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        mask, ss_gradient = ctx.saved_tensors
+        return grad_output * mask.float(), (grad_output * ss_gradient).sum(), None
+
+
 # TODO asym
 class lsq_quantize_perchannel(torch.autograd.Function):
     @staticmethod
@@ -177,7 +201,8 @@ class LSQ(nn.Module):
                 self.initialized = True
                 print('Initializing step size to ', self.step_size)
 
-        return lsq_quantize().apply(x, self.step_size, self.bits)
+        return binary_lsq().apply(x, self.step_size)
+        # return lsq_quantize().apply(x, self.step_size, self.bits)
 
 
 class LSQPerChannel(nn.Module):
@@ -250,7 +275,8 @@ class MultibitLSQShared(nn.Module):
         output = 0
         for b in range(self.bits):
             scale = 2 ** (self.bits - 1 - b)
-            quantized = lsq_quantize().apply(x, self.step_size * scale, 1)
+            # quantized = lsq_quantize().apply(x, self.step_size * scale, 1)
+            quantized = binary_lsq().apply(x, self.step_size * scale)
             output = output + quantized
             x = x - quantized
 
@@ -289,12 +315,12 @@ class MultibitLSQNoExpand(nn.Module):   # TODO better initialization?
                     self.quantizers[b].initialized = True
                     print('Initializing step size of {} to {}'.format(b, self.quantizers[b].step_size))
 
-        #         num_bins = 2 ** self.bits - 1
-        #         base_ss = 2 * x.abs().mean() / np.sqrt(num_bins)
-        #         for b in range(self.bits):
-        #             self.quantizers[b].step_size.copy_(base_ss * 2 ** (self.bits - 1 - b))
-        #             self.quantizers[b].initialized = True
-        #             print('Initializing step size of {} to {}'.format(b, self.quantizers[b].step_size))
+                # num_bins = 2 ** self.bits - 1
+                # base_ss = 2 * x.abs().mean() / np.sqrt(num_bins)
+                # for b in range(self.bits):
+                #     self.quantizers[b].step_size.copy_(base_ss * 2 ** (self.bits - 1 - b))
+                #     self.quantizers[b].initialized = True
+                #     print('Initializing step size of {} to {}'.format(b, self.quantizers[b].step_size))
 
         output = 0
         for quantizer in self.quantizers:

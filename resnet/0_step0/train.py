@@ -244,7 +244,7 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
     )
 
     for i, (images, target) in data_iter:
-        # if i > 200:
+        # if i > 3000:
         #     break
         data_time = time.time() - end
         images = images.cuda()
