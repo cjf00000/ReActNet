@@ -20,7 +20,7 @@ from utils import log
 from utils.log import lr_cosine_policy
 from torchvision import datasets, transforms
 from torch.cuda.amp import autocast, GradScaler
-from birealnet import get_model, init_model_from, init_ea_model_from
+from birealnet import get_model, init_model_from, init_ea_model_from, init_binaryduo_from
 import torchvision.models as models
 from dataloaders import get_dataloaders
 from mixup import *
@@ -159,13 +159,15 @@ def main():
 
         # TODO hack
         # init_ea_model_from(model_student, state_dict, 2)
-        if args.qw[0] != 'm' and args.qw[0] != 'a':
-            model_student.load_state_dict(state_dict, strict=False)
-        else:
+        if args.qw[0] == 'm' or args.qw[0] == 'a':
             initialized = True
-            if args.qw[0] == 'a':
-                initialized = False
+            # if args.qw[0] == 'a':
+            #     initialized = False
             init_model_from(model_student, state_dict, int(args.qw[1:]), initialized=initialized)
+        elif args.qw[0] == 'd':
+            init_binaryduo_from(model_student, state_dict)
+        else:
+            model_student.load_state_dict(state_dict, strict=False)
 
         print("loaded checkpoint {} epoch = {}".format(checkpoint_tar, checkpoint['epoch']))
 

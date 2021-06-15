@@ -72,6 +72,9 @@ class BasicBlock(nn.Module):
         elif qw[0] == 'a':
             bits = int(qw[1:])
             self.binary_conv = MultibitLSQConvAct(inplanes, planes, stride=stride, num_bits=bits)
+        elif qw[0] == 'd':
+            bits = int(qw[1:])
+            self.binary_conv = BinaryDuo(inplanes, planes, stride=stride, num_bits=bits)
         else:
             bits = int(qw[1:])
             self.binary_conv = LSQConv(inplanes, planes, stride=stride, num_bits=bits)
@@ -232,9 +235,12 @@ def init_model_from(model, state_dict, num_bits, initialized=True):
     model.load_state_dict(new_state_dict, strict=False)
     for name, layer in model.named_modules():
         if isinstance(layer, MultibitLSQConv) or isinstance(layer, MultibitLSQConvAct):
-            print(name)
-            layer.init_from(state_dict[name + '.weight'], state_dict.get(name + '.quantizer.step_size', ''))
-        if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel):
+            # layer.init_from(state_dict[name + '.weight'], state_dict.get(name + '.quantizer.step_size', ''))
+            # layer.init_from(state_dict[name + '.weight'], state_dict.get(name + '.step_size', ''))
+            layer.init_from(state_dict[name + '.weight'],
+                            state_dict[name.replace('binary_conv', 'binary_activation.step_size')])
+            print(name, layer.act_quantizer.step_size)
+        if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel) or isinstance(layer, MultibitLSQNoScale):
             # print('setting ', layer)
             if initialized:
                 layer.initialized = True
@@ -263,5 +269,28 @@ def init_ea_model_from(model, state_dict, num_bits, initialized=True):
         if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel):
             if initialized:
                 layer.initialized = True
+
+    print('State dict loaded.')
+
+
+def init_binaryduo_from(model, state_dict):
+    print(state_dict.keys())
+    print(model.state_dict().keys())
+    from quantize import BinaryDuo
+
+    new_state_dict = {}
+    for name in state_dict.keys():
+        value = state_dict[name]
+        if 'binary_activation.step_size' in name:
+            pass
+        elif 'binary_conv' in name:
+            pass
+        else:
+            new_state_dict[name] = value
+
+    model.load_state_dict(new_state_dict, strict=False)
+    for name, layer in model.named_modules():
+        if isinstance(layer, BinaryDuo):
+            layer.init_from(state_dict[name + '.weight'], state_dict[name.replace('binary_conv', 'binary_activation.step_size')])
 
     print('State dict loaded.')
