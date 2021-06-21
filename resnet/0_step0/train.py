@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.utils
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+from quantize import BinaryDuo
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 sys.path.append("../../")
@@ -109,7 +110,6 @@ def main():
         get_criterion(args.dataset, args.teacher, num_classes, args.gpu, args.mixup, args.label_smoothing)
 
     # Build optimizer
-    all_parameters = model_student.parameters()
     weight_parameters = []
     step_parameters = []
     other_parameters = []
@@ -154,20 +154,32 @@ def main():
                     find_module = True
             if not find_module:
                 state_dict = {'module.'+k: state_dict[k] for k in state_dict}
-        for k in state_dict:
-            print(k)
 
         # TODO hack
         # init_ea_model_from(model_student, state_dict, 2)
         if args.qw[0] == 'm' or args.qw[0] == 'a':
             initialized = True
-            # if args.qw[0] == 'a':
-            #     initialized = False
+            if args.qw[0] == 'a':
+                initialized = False
             init_model_from(model_student, state_dict, int(args.qw[1:]), initialized=initialized)
-        elif args.qw[0] == 'd':
+        elif args.qw[0] == 'd' or args.qw[0] == 'e':
             init_binaryduo_from(model_student, state_dict)
         else:
             model_student.load_state_dict(state_dict, strict=False)
+
+        # TODO: hack load step size from another checkpoint
+        checkpoint_2 = torch.load('cifar100_64_sa2.pth.tar',
+                                  map_location=lambda storage, loc: storage.cuda(args.gpu))
+        state_dict = checkpoint_2['state_dict']
+        for name, layer in model_student.named_modules():
+            print('Loading ', name)
+            if isinstance(layer, BinaryDuo):
+                with torch.no_grad():
+                    layer.step_size.copy_(2 * state_dict.get(name.replace('binary_conv', 'binary_activation.step_size'), None))
+                    layer.initialized = True
+
+        for k, v in model_student.named_parameters():
+            print(k)
 
         print("loaded checkpoint {} epoch = {}".format(checkpoint_tar, checkpoint['epoch']))
 
@@ -217,12 +229,12 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
         logger.register_metric('train.data_time', log.AverageMeter(), log_level=0)
         logger.register_metric('train.time', log.AverageMeter(), log_level=0)
         logger.register_metric('train.ips', log.AverageMeter(), log_level=0)
-        for pname, p in model_student.named_parameters():
-            if 'step_size' in pname:
-                logger.register_metric('step_size/' + pname.replace('.step_size', ''),
-                                       log.AverageMeter(), log_level=1)
-                logger.register_metric('step_size/' + pname.replace('.step_size', '') + '.grad',
-                                       log.AverageMeter(), log_level=1)
+        # for pname, p in model_student.named_parameters():
+        #     if 'step_size' in pname:
+        #         logger.register_metric('step_size/' + pname.replace('.step_size', ''),
+        #                                log.AverageMeter(), log_level=1)
+        #         logger.register_metric('step_size/' + pname.replace('.step_size', '') + '.grad',
+        #                                log.AverageMeter(), log_level=1)
 
     model_student.train()
     if model_teacher:
@@ -286,12 +298,12 @@ def train(epoch, train_loader, model_student, model_teacher, criterion, optimize
             logger.log_metric('train.time', batch_time)
             logger.log_metric('train.data_time', data_time)
             logger.log_metric('train.ips', calc_ips(n, batch_time))
-            for pname, p in model_student.named_parameters():
-                if 'step_size' in pname:
-                    logger.log_metric('step_size/' + pname.replace('.step_size', ''),
-                                           p.abs().mean().item())
-                    logger.log_metric('step_size/' + pname.replace('.step_size', '') + '.grad',
-                                      p.grad.abs().mean().item())
+            # for pname, p in model_student.named_parameters():
+            #     if 'step_size' in pname:
+            #         logger.log_metric('step_size/' + pname.replace('.step_size', ''),
+            #                                p.abs().mean().item())
+            #         logger.log_metric('step_size/' + pname.replace('.step_size', '') + '.grad',
+            #                           p.grad.abs().mean().item())
 
         end = time.time()
 

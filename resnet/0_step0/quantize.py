@@ -128,7 +128,7 @@ class binary_lsq(torch.autograd.Function):
     def backward(ctx, grad_output):
         mask, ss_gradient = ctx.saved_tensors
         return grad_output * mask.float() * binary_lsq.multiplier, \
-               (grad_output * ss_gradient).sum(), None
+               (grad_output * ss_gradient).sum()
 
 
 # TODO asym
@@ -194,7 +194,7 @@ class LSQ(nn.Module):
     def __init__(self, bits):
         super(LSQ, self).__init__()
         self.bits = bits
-        self.step_size = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        self.step_size = nn.Parameter(torch.tensor(1.0), requires_grad=False)
         self.initialized = False
 
     def forward(self, x):
@@ -251,6 +251,7 @@ class MultibitLSQNoScale(nn.Module):
         self.bits = bits
         # self.quantizers = nn.ModuleList([LSQ(1) for i in range(bits)])
         self.step_size = nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        # self.step_size = torch.tensor(1.0)  # TODO hack
         self.initialized = False
 
     def forward(self, x):
@@ -454,7 +455,7 @@ class MultibitLSQConv(nn.Conv2d):
                                               out_chn * (2 * num_bits - 1),
                                               kernel_size,
                                               stride,
-                                              padding)
+                                              padding, bias=False)
         self.act_quantizer = MultibitLSQ(num_bits)
         self.wt_quantizer = LSQPerChannel(out_chn * (2 * num_bits - 1), 1)
         self.bits = num_bits
@@ -543,14 +544,17 @@ class MultibitLSQConvAct(nn.Conv2d):        # Only quantize activation
                                               out_chn,
                                               kernel_size,
                                               stride,
-                                              padding)
+                                              padding, bias=False)
         self.act_quantizer = MultibitLSQNoScale(num_bits)
+        # self.act_quantizer.step_size.requires_grad = False
+        # self.act_quantizer = lambda x: x
         self.bits = num_bits
         self.C = in_chn
 
     def init_from(self, weight, step_size):
         with torch.no_grad():
-            self.act_quantizer.step_size.copy_(step_size)
+            if step_size is not None:
+                self.act_quantizer.step_size.copy_(step_size)
             for b in range(self.bits):
                 self.weight[:, b*self.C:(b+1)*self.C] = weight
 
@@ -610,29 +614,87 @@ class MultibitLSQConvAct(nn.Conv2d):        # Only quantize activation
 
 class BinaryDuo(nn.Conv2d):
     def __init__(self, in_chn, out_chn, kernel_size=3, stride=1, padding=1, num_bits=1):
-        super(BinaryDuo, self).__init__(in_chn*2, out_chn, kernel_size, stride, padding)
-        self.step_size = torch.tensor(1.0)
+        super(BinaryDuo, self).__init__(in_chn*3, out_chn, kernel_size, stride, padding)
+        self.step_size = nn.Parameter(torch.tensor(1.0))
+        self.step_size.requires_grad = False
+        self.bits = num_bits
+        self.C = in_chn
+        self.initialized = False
+
+    def init_from(self, weight, step_size):
+        with torch.no_grad():
+            if step_size:
+                self.step_size.copy_(step_size * 2)
+                self.initialized = True
+
+            # self.weight.copy_(weight)
+            for b in range(3):
+                self.weight[:, b * self.C:(b + 1) * self.C] = weight
+
+    def forward(self, x):
+        if not self.initialized:
+            with torch.no_grad():
+                num_bins = 2 ** self.bits - 1
+                self.step_size.copy_(2 * x.abs().mean() / np.sqrt(num_bins))
+                self.initialized = True
+                print('Initializing step size to ', self.step_size)
+
+        # x = x / self.step_size
+        # x0 = basic_binary_activation().apply(x)
+        # x_m = basic_binary_activation().apply(x + 1)
+        # x_p = basic_binary_activation().apply(x - 1)
+        # quant_input = torch.cat([x0, x_m, x_p], 1) * (self.step_size / 2)
+
+        # TODO: use BinaryLSQ to learn the step size
+        x0 = binary_lsq().apply(x, self.step_size)
+        x_m = binary_lsq().apply(x + 0.5 * self.step_size.detach(), self.step_size)
+        x_p = binary_lsq().apply(x - 0.5 * self.step_size.detach(), self.step_size)
+        quant_input = torch.cat([x0, x_m, x_p], 1) / 2
+
+        # x0 = basic_binary_activation().apply(x)
+        # residual = x - x0
+        # x1 = basic_binary_activation().apply(residual * 2) / 2
+        # quant_input = torch.cat([x0, x1], 1) * self.step_size
+
+        # x < -1: -3
+        # -1 < x < 0: -1
+        # 0 < x < 1: 1
+        # x > 1: 3
+
+        # quant_input = torch.cat([x0, x_m, x_p], 1) * (self.step_size / 2)
+
+        # Possibility 1: inapproprite scale
+        # Possibility 2:
+
+
+        y = F.conv2d(quant_input, self.weight, stride=self.stride, padding=self.padding)
+        return y
+
+
+class BinaryDuo2(nn.Conv2d):
+    def __init__(self, in_chn, out_chn, kernel_size=3, stride=1, padding=1, num_bits=1):
+        super(BinaryDuo2, self).__init__(in_chn*2, out_chn, kernel_size, stride, padding)
+        self.step_size = nn.Parameter(torch.tensor(1.0))
+        self.step_size.requires_grad = False
         self.bits = num_bits
         self.C = in_chn
 
     def init_from(self, weight, step_size):
         with torch.no_grad():
             self.step_size.copy_(step_size)
-            # self.weight.copy_(weight)
-            for b in range(self.bits):
+            for b in range(2):
                 self.weight[:, b * self.C:(b + 1) * self.C] = weight
+            # w1 = weight[:, :self.C]
+            # w2 = weight[:, self.C:]
+            # self.weight[:, :self.C] = (w1 + w2) / 2
+            # self.weight[:, self.C:] = w2
 
     def forward(self, x):
         x = x / self.step_size
         x0 = basic_binary_activation().apply(x)
-
         residual = x - x0
         x1 = basic_binary_activation().apply(residual * 2) / 2
 
-        # Possibility 1: inapproprite scale
-        # Possibility 2:
-
         quant_input = torch.cat([x0, x1], 1) * self.step_size
-
         y = F.conv2d(quant_input, self.weight, stride=self.stride, padding=self.padding)
         return y
