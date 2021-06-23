@@ -242,7 +242,7 @@ def init_model_from(model, state_dict, num_bits, initialized=True):
             # layer.init_from(state_dict[name + '.weight'], state_dict.get(name + '.step_size', ''))
             layer.init_from(state_dict[name + '.weight'],
                             state_dict.get(name.replace('binary_conv', 'binary_activation.step_size'), None))
-            print(name, layer.act_quantizer.step_size)
+            # print(name, layer.act_quantizer.step_size)
         if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel) or isinstance(layer, MultibitLSQNoScale):
             # print('setting ', layer)
             if initialized:

@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.utils
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
-from quantize import BinaryDuo
+from quantize import BinaryDuo, MultibitLSQNoScale
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 sys.path.append("../../")
@@ -168,15 +168,21 @@ def main():
             model_student.load_state_dict(state_dict, strict=False)
 
         # TODO: hack load step size from another checkpoint
-        checkpoint_2 = torch.load('cifar100_64_sa2.pth.tar',
-                                  map_location=lambda storage, loc: storage.cuda(args.gpu))
-        state_dict = checkpoint_2['state_dict']
-        for name, layer in model_student.named_modules():
-            print('Loading ', name)
-            if isinstance(layer, BinaryDuo):
-                with torch.no_grad():
-                    layer.step_size.copy_(2 * state_dict.get(name.replace('binary_conv', 'binary_activation.step_size'), None))
-                    layer.initialized = True
+        # print('Ckpt 2...')
+        # checkpoint_2 = torch.load('cifar100_64_sa2.pth.tar',
+        #                           map_location=lambda storage, loc: storage.cuda(args.gpu))
+        # state_dict = checkpoint_2['state_dict']
+        # for name, layer in model_student.named_modules():
+        #     if isinstance(layer, BinaryDuo):
+        #         print('Loading ', name)
+        #         with torch.no_grad():
+        #             layer.step_size.copy_(2 * state_dict.get(name.replace('binary_conv', 'binary_activation.step_size'), None))
+        #             layer.initialized = True
+        #     if isinstance(layer, MultibitLSQNoScale):
+        #         print('Loading ', name)
+        #         with torch.no_grad():
+        #             layer.step_size.copy_(state_dict.get(name.replace('binary_conv.act_quantizer', 'binary_activation.step_size'), None))
+        #             layer.initialized = True
 
         for k, v in model_student.named_parameters():
             print(k)
