@@ -40,44 +40,22 @@ class BasicBlock(nn.Module):
             self.binary_activation = BinaryActivation()
         elif qa == 'fp':
             self.binary_activation = lambda x: x
-        elif qa[0] == 'q':
-            bits = int(qa[1:])
-            self.binary_activation = MultiBitBinaryActivation(bits)
         elif qa[0] == 'l':
             bits = int(qa[1:])
             self.binary_activation = LSQ(bits)
-        elif qa[0] == 't':
-            bits = int(qa[1:])
-            self.binary_activation = Quantize(bits)
-        elif qa[0] == 's':
-            bits = int(qa[1:])
-            self.binary_activation = MultibitLSQShared(bits)
-        elif qa[0] == 'e':
-            bits = int(qa[1:])
-            self.binary_activation = MultibitLSQNoExpand(bits)
         else:
-            bits = int(qa[1:])
-            self.binary_activation = MultibitActivation(bits)
+            raise RuntimeError("Unknown activation quantizer")
 
         if qw == 'b':
             self.binary_conv = HardBinaryConv(inplanes, planes, stride=stride)
         elif qw == 'fp':
             self.binary_conv = conv3x3(inplanes, planes, stride=stride)
-        elif qw[0] == 't':
-            bits = int(qw[1:])
-            self.binary_conv = QConv(inplanes, planes, stride=stride, num_bits=bits)
         elif qw[0] == 'm':
             bits = int(qw[1:])
             self.binary_conv = MultibitLSQConv(inplanes, planes, stride=stride, num_bits=bits)
         elif qw[0] == 'a':
             bits = int(qw[1:])
             self.binary_conv = MultibitLSQConvAct(inplanes, planes, stride=stride, num_bits=bits)
-        elif qw[0] == 'd':
-            bits = int(qw[1:])
-            self.binary_conv = BinaryDuo(inplanes, planes, stride=stride, num_bits=bits)
-        elif qw[0] == 'e':
-            bits = int(qw[1:])
-            self.binary_conv = BinaryDuo2(inplanes, planes, stride=stride, num_bits=bits)
         else:
             bits = int(qw[1:])
             self.binary_conv = LSQConv(inplanes, planes, stride=stride, num_bits=bits)
@@ -248,56 +226,5 @@ def init_model_from(model, state_dict, num_bits, initialized=True):
             # print('setting ', layer)
             if initialized:
                 layer.initialized = True
-
-    print('State dict loaded.')
-
-
-def init_ea_model_from(model, state_dict, num_bits, initialized=True):
-    print(state_dict.keys())
-    print(model.state_dict().keys())
-    from quantize import LSQ, LSQPerChannel, MultibitLSQConv
-
-    new_state_dict = {}
-    for name in state_dict.keys():
-        value = state_dict[name]
-        if 'step_size' in name:
-            for b in range(num_bits):
-                new_name = name.replace('step_size', '') + \
-                           'quantizers.{}.step_size'.format(b)
-                new_state_dict[new_name] = value * 2 ** (num_bits - 1 - b)
-        else:
-            new_state_dict[name] = value
-
-    model.load_state_dict(new_state_dict, strict=False)
-    for name, layer in model.named_modules():
-        if isinstance(layer, LSQ) or isinstance(layer, LSQPerChannel):
-            if initialized:
-                layer.initialized = True
-
-    print('State dict loaded.')
-
-
-def init_binaryduo_from(model, state_dict):
-    print(state_dict.keys())
-    print(model.state_dict().keys())
-    from quantize import BinaryDuo, BinaryDuo2
-
-    new_state_dict = {}
-    for name in state_dict.keys():
-        value = state_dict[name]
-        if 'binary_activation.step_size' in name:
-            pass
-        elif 'binary_conv' in name:
-            pass
-        else:
-            new_state_dict[name] = value
-
-    model.load_state_dict(new_state_dict, strict=False)
-    for name, layer in model.named_modules():
-        if isinstance(layer, BinaryDuo) or isinstance(layer, BinaryDuo2):
-            layer.init_from(state_dict[name + '.weight'],
-                            state_dict.get(name.replace('binary_conv', 'binary_activation.step_size'), None))
-        # if isinstance(layer, BinaryDuo2):
-        #     layer.init_from(state_dict[name + '.weight'], None)
 
     print('State dict loaded.')

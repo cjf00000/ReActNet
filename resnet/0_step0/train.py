@@ -11,7 +11,6 @@ import torch.nn as nn
 import torch.utils
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
-from quantize import BinaryDuo, MultibitLSQNoScale
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 sys.path.append("../../")
@@ -21,7 +20,7 @@ from utils import log
 from utils.log import lr_cosine_policy
 from torchvision import datasets, transforms
 from torch.cuda.amp import autocast, GradScaler
-from birealnet import get_model, init_model_from, init_ea_model_from, init_binaryduo_from
+from birealnet import get_model, init_model_from
 import torchvision.models as models
 from dataloaders import get_dataloaders
 from mixup import *
@@ -162,27 +161,8 @@ def main():
             # if args.qw[0] == 'a':
             #     initialized = False
             init_model_from(model_student, state_dict, int(args.qw[1:]), initialized=initialized)
-        elif args.qw[0] == 'd' or args.qw[0] == 'e':
-            init_binaryduo_from(model_student, state_dict)
         else:
             model_student.load_state_dict(state_dict, strict=False)
-
-        # TODO: hack load step size from another checkpoint
-        # print('Ckpt 2...')
-        # checkpoint_2 = torch.load('cifar100_64_sa2.pth.tar',
-        #                           map_location=lambda storage, loc: storage.cuda(args.gpu))
-        # state_dict = checkpoint_2['state_dict']
-        # for name, layer in model_student.named_modules():
-        #     if isinstance(layer, BinaryDuo):
-        #         print('Loading ', name)
-        #         with torch.no_grad():
-        #             layer.step_size.copy_(2 * state_dict.get(name.replace('binary_conv', 'binary_activation.step_size'), None))
-        #             layer.initialized = True
-        #     if isinstance(layer, MultibitLSQNoScale):
-        #         print('Loading ', name)
-        #         with torch.no_grad():
-        #             layer.step_size.copy_(state_dict.get(name.replace('binary_conv.act_quantizer', 'binary_activation.step_size'), None))
-        #             layer.initialized = True
 
         for k, v in model_student.named_parameters():
             print(k)
