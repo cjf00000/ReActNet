@@ -11,11 +11,12 @@ from birealnet import birealnet18
 from utils import log
 from dataloaders import get_dataloaders
 from birealnet import get_model, init_model_from, init_ea_model_from, init_binaryduo_from
+import quantize
 from quantize import *
 
 # ckpt_file = 'cifar100_fp18_c64_sgd_wd5e-4_distill_qa/model_best.pth.tar'
-# ckpt_file = 'cifar100_64_sa2.pth.tar'
-ckpt_file = 'cifar100_fp18_c64_a2_mixup_nowd/checkpoint-1.pth.tar'
+ckpt_file = 'cifar100_64_fp.pth.tar'
+# ckpt_file = 'cifar100_fp18_c64_a2_mixup_nowd/checkpoint-1.pth.tar'
 valdir = '~/data/'
 batch_size = 1000
 data = torch.load(ckpt_file)
@@ -33,8 +34,9 @@ num_classes, _, _, val_loader, val_iters = \
 model = get_model('resnet18', num_classes=num_classes, num_channels=64,
                   qa='fp', qw='a2')
 model = model.cuda()
-model.load_state_dict(state_dict, strict=False)
+# model.load_state_dict(state_dict, strict=False)
 
+init_model_from(model, state_dict, 2, initialized=False)
 # init_binaryduo_from(model, state_dict)
 
 # for name, layer in model.named_modules():
@@ -48,9 +50,9 @@ model.load_state_dict(state_dict, strict=False)
 # exit(0)
 # # init_model_from(model, state_dict, 2)
 # #init_ea_model_from(model, state_dict, 2)
-for name, layer in model.named_modules():
-    if isinstance(layer, LSQ) or isinstance(layer, MultibitLSQNoScale):
-        layer.initialized = True
+# for name, layer in model.named_modules():
+#     if isinstance(layer, LSQ) or isinstance(layer, MultibitLSQNoScale):
+#         layer.initialized = True
 
 
 # Validation loop
@@ -63,9 +65,9 @@ num_images = 50000
 with torch.no_grad():
     for i, (images, target) in enumerate(val_loader):
         if i == 0:
-            birealnet.debug = True
+            quantize.debug = True
         else:
-            birealnet.debug = False
+            quantize.debug = False
 
         images = images.cuda()
         target = target.cuda()
@@ -80,6 +82,7 @@ with torch.no_grad():
         print(i, top1.get_val())
 
         torch.cuda.synchronize()
+        exit(0)
 
 elapsed = time.time() - start_t
 print('Top 1 = {}, Top 5 = {}. IPS = {}'.format(top1.get_val(), top5.get_val(),

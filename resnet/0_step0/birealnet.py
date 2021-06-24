@@ -97,11 +97,12 @@ class BasicBlock(nn.Module):
         if debug:
             global cnt
             cnt += 1
-            data = [out, self.binary_conv.weight, self.binary_conv.bias]
+            data = [out, self.binary_conv.act_quantizer.step_size, self.binary_conv.weight, self.binary_conv.bias]
             torch.save(data, 'layers/layer_{}.pth.tar'.format(cnt))
 
         out = self.binary_activation(out)
         out = self.binary_conv(out)
+
         out = self.bn1(out)
 
         if self.downsample is not None:

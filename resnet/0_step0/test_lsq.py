@@ -3,28 +3,30 @@ import torch.nn as nn
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-from quantize import MultibitActivation, LSQ
+from quantize import *
 
 
 if __name__ == '__main__':
     x = torch.linspace(-3, 3, 100)
     x.requires_grad_()
 
-    q = MultibitActivation(2)
-    lsq = LSQ(2)
+    #q = MultibitActivation(2)
+    # lsq = LSQ(2)
+    # lsq = MultibitLSQShared(2)
+    lsq = MultibitLSQNoScale(2)
 
     grad_weight = torch.ones_like(x)
 
     fig, ax = plt.subplots(3, 2, figsize=(10, 15))
 
     # Quantize
-    y0 = q(x)
-    loss = (y0 * grad_weight).sum()
-    loss.backward()
-    g0 = x.grad.clone()
-    x.grad = None
-    ax[0, 0].plot(x.detach(), y0.detach())
-    ax[0, 1].plot(x.detach(), g0.detach())
+    # y0 = q(x)
+    # loss = (y0 * grad_weight).sum()
+    # loss.backward()
+    # g0 = x.grad.clone()
+    # x.grad = None
+    # ax[0, 0].plot(x.detach(), y0.detach())
+    # ax[0, 1].plot(x.detach(), g0.detach())
 
     # LSQ
     y = lsq(x)

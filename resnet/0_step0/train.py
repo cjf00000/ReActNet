@@ -159,8 +159,8 @@ def main():
         # init_ea_model_from(model_student, state_dict, 2)
         if args.qw[0] == 'm' or args.qw[0] == 'a':
             initialized = True
-            if args.qw[0] == 'a':
-                initialized = False
+            # if args.qw[0] == 'a':
+            #     initialized = False
             init_model_from(model_student, state_dict, int(args.qw[1:]), initialized=initialized)
         elif args.qw[0] == 'd' or args.qw[0] == 'e':
             init_binaryduo_from(model_student, state_dict)
